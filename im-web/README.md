@@ -1,5 +1,30 @@
-# Vue 3 + TypeScript + Vite
+# IM 助手 · 网页端
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Vue 3 + TypeScript + Vite 的前端演示，包含登录与注册界面、会话消息、联系人、好友申请、讨论室、通知、待办、设置和「接上讨论」侧栏。
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+## 本地运行
+
+在 `im-web` 目录执行：
+
+```bash
+npm ci
+npm run dev
+```
+
+打开终端显示的本地地址。构建检查：`npm run build`。
+
+## 体验路径
+
+1. 输入昵称进入工作台；注册界面可设置唯一账号。
+2. 在消息页发送本地演示消息；打开「接上讨论」查看消息线索并创建待办。
+3. 在联系人页开始私聊；在好友申请页处理何雨桐的邀请，或通过 `@heyutong` 尝试搜索账号。
+4. 创建讨论室并邀请自己的好友；通知和待办中的「查看来源」可定位原消息。
+5. 在设置页更改字号、关注词、译文显示与时区。更改存入浏览器本地存储。
+
+## 接入边界
+
+这是可交互的**前端演示**，尚未连接后端。登录不做身份认证；消息、好友申请、建群、待办、通知和设置只保存在当前浏览器，其他用户无法收到。刷新页面会保留演示数据；关闭会话后需要重新输入昵称。请勿输入真实密码或敏感消息。
+
+浏览器支持 Web Speech API 且授予麦克风权限时，可以将本人的语音转写到输入框；临时字幕只在本机显示，最终文本需要用户手动点击发送。示例译文为预置数据；真实语音、翻译、AI 摘要、推送与跨设备同步均需后续服务端接口。讨论线索只引用已有演示消息，不代表模型生成的分析结果。
+
+建议后端接入顺序：认证与用户资料 → 好友申请/关系 → 会话与消息 WebSocket → 群成员权限 → 通知/待办 → 语音与翻译 → AI 摘要。接入时将 `src/demo.ts` 的演示数据与 `src/App.vue` 的本地操作替换为 API/实时事件，并处理服务端时间、分页、重连、消息状态与权限校验。
