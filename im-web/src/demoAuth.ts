@@ -1,4 +1,5 @@
-export type ContactType = "phone" | "email";
+import { demoCodes, type ContactType } from "./demoVerification";
+export type { ContactType } from "./demoVerification";
 
 export type DemoAccount = {
   id: string;
@@ -102,6 +103,8 @@ export async function registerAccount(input: {
   handle: string;
   phone?: string;
   email?: string;
+  phoneCode?: string;
+  emailCode?: string;
   password: string;
 }): Promise<DemoAccount> {
   const name = input.name.trim();
@@ -125,6 +128,10 @@ export async function registerAccount(input: {
     throw new Error("此邮箱已绑定其他账号");
   if (existing.some((account) => account.handle === handle))
     throw new Error("此唯一账号已被使用");
+  if (phone)
+    demoCodes.verify("register", "phone", phone, input.phoneCode || "");
+  if (email)
+    demoCodes.verify("register", "email", email, input.emailCode || "");
   const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
   const account: DemoAccount = {
     id: crypto.randomUUID(),
@@ -136,6 +143,8 @@ export async function registerAccount(input: {
     passwordHash: await hashPassword(input.password, salt),
   };
   localStorage.setItem(accountKey, JSON.stringify([...existing, account]));
+  if (phone) demoCodes.consume("register", "phone", phone);
+  if (email) demoCodes.consume("register", "email", email);
   return account;
 }
 
@@ -152,11 +161,25 @@ export async function authenticateAccount(
   return candidate === account.passwordHash ? account : null;
 }
 
+export function authenticateWithCode(
+  contactType: ContactType,
+  identifier: string,
+  code: string,
+): DemoAccount | null {
+  const contact = normalizeContact(contactType, identifier);
+  if (!validContact(contactType, contact))
+    throw new Error("请输入正确的手机号或邮箱");
+  demoCodes.verify("login", contactType, contact, code);
+  demoCodes.consume("login", contactType, contact);
+  return accounts().find((item) => item[contactType] === contact) || null;
+}
+
 export async function bindAccountContact(
   accountId: string,
   contactType: ContactType,
   identifier: string,
   password: string,
+  code: string,
 ): Promise<DemoAccount> {
   const contact = normalizeContact(contactType, identifier);
   if (!validContact(contactType, contact))
@@ -174,9 +197,11 @@ export async function bindAccountContact(
     throw new Error("此手机号或邮箱已绑定其他账号");
   const verified = await hashPassword(password, account.salt);
   if (verified !== account.passwordHash) throw new Error("密码不正确");
+  demoCodes.verify("bind", contactType, contact, code);
   const updated = { ...account, [contactType]: contact };
   existing[index] = updated;
   localStorage.setItem(accountKey, JSON.stringify(existing));
+  demoCodes.consume("bind", contactType, contact);
   return updated;
 }
 

@@ -4,6 +4,7 @@ import {
   accountStateKey,
   accounts,
   authenticateAccount,
+  authenticateWithCode,
   bindAccountContact,
   normalizeContact,
   registerAccount,
@@ -11,6 +12,7 @@ import {
   sessionKey,
   validContact,
 } from "../src/demoAuth.ts";
+import { demoCodes, DemoVerification } from "../src/demoVerification.ts";
 
 const items = new Map();
 globalThis.localStorage = {
@@ -20,23 +22,41 @@ globalThis.localStorage = {
 };
 globalThis.sessionStorage = globalThis.localStorage;
 
-test("both contacts lead to one account and registration does not log in", async () => {
+async function registerWithCodes(input) {
+  const phoneCode = input.phone
+    ? demoCodes.issue(
+        "register",
+        "phone",
+        normalizeContact("phone", input.phone),
+      )
+    : undefined;
+  const emailCode = input.email
+    ? demoCodes.issue(
+        "register",
+        "email",
+        normalizeContact("email", input.email),
+      )
+    : undefined;
+  return registerAccount({ ...input, phoneCode, emailCode });
+}
+
+test("both contacts require separate codes and log in to the same account", async () => {
   items.clear();
   assert.equal(validContact("phone", "138 0013 8000"), true);
   assert.equal(
     normalizeContact("email", " Person@Example.COM "),
     "person@example.com",
   );
-  assert.equal(validContact("phone", "12345"), false);
-  const account = await registerAccount({
+  const input = {
     name: "岳蕾",
     handle: "yuelei",
     phone: "13800138000",
     email: " Person@Example.COM ",
     password: "Testpass123",
-  });
+  };
+  await assert.rejects(registerAccount(input), /验证码不存在/);
+  const account = await registerWithCodes(input);
   assert.equal(sessionAccount(), null);
-  assert.equal(account.email, "person@example.com");
   assert.equal(
     (await authenticateAccount("phone", account.phone, "Testpass123"))?.id,
     account.id,
@@ -48,6 +68,15 @@ test("both contacts lead to one account and registration does not log in", async
   assert.equal(
     await authenticateAccount("phone", account.phone, "wrongpass"),
     null,
+  );
+  const loginCode = demoCodes.issue("login", "email", account.email);
+  assert.equal(
+    authenticateWithCode("email", account.email, loginCode)?.id,
+    account.id,
+  );
+  assert.throws(
+    () => authenticateWithCode("email", account.email, loginCode),
+    /不存在/,
   );
   assert.equal(JSON.stringify(accounts()).includes("Testpass123"), false);
   localStorage.setItem(sessionKey, account.id);
@@ -63,27 +92,41 @@ test("both contacts lead to one account and registration does not log in", async
   );
 });
 
-test("a phone-only account can bind email and then log in by either contact", async () => {
+test("binding a missing contact requires the current password and its code", async () => {
   items.clear();
-  const account = await registerAccount({
+  const account = await registerWithCodes({
     name: "林知夏",
     handle: "linzhixia",
     phone: "13900139000",
     password: "Anotherpass456",
   });
-  assert.equal(
-    await authenticateAccount("email", "lin@example.com", "Anotherpass456"),
-    null,
+  const code = demoCodes.issue("bind", "email", "lin@example.com");
+  await assert.rejects(
+    bindAccountContact(
+      account.id,
+      "email",
+      "lin@example.com",
+      "wrongpass",
+      code,
+    ),
+    /密码不正确/,
   );
   await assert.rejects(
-    bindAccountContact(account.id, "email", "lin@example.com", "wrongpass"),
-    /密码不正确/,
+    bindAccountContact(
+      account.id,
+      "email",
+      "lin@example.com",
+      "Anotherpass456",
+      "000000" === code ? "111111" : "000000",
+    ),
+    /验证码不正确/,
   );
   const updated = await bindAccountContact(
     account.id,
     "email",
     " Lin@Example.COM ",
     "Anotherpass456",
+    code,
   );
   assert.equal(updated.id, account.id);
   assert.equal(
@@ -101,10 +144,11 @@ test("a phone-only account can bind email and then log in by either contact", as
       "email",
       "other@example.com",
       "Anotherpass456",
+      code,
     ),
     /已经绑定/,
   );
-  const second = await registerAccount({
+  const second = await registerWithCodes({
     name: "何雨桐",
     handle: "heyutong",
     email: "he@example.com",
@@ -112,14 +156,20 @@ test("a phone-only account can bind email and then log in by either contact", as
   });
   assert.notEqual(accountStateKey(account.id), accountStateKey(second.id));
   await assert.rejects(
-    bindAccountContact(second.id, "phone", "13900139000", "Password789"),
+    bindAccountContact(
+      second.id,
+      "phone",
+      "13900139000",
+      "Password789",
+      "123456",
+    ),
     /其他账号/,
   );
 });
 
-test("earlier single-contact demo accounts stay usable", async () => {
+test("old single-contact accounts can still bind a second verified contact", async () => {
   items.clear();
-  const account = await registerAccount({
+  const account = await registerWithCodes({
     name: "旧用户",
     handle: "old_user",
     email: "old@example.com",
@@ -143,6 +193,7 @@ test("earlier single-contact demo accounts stay usable", async () => {
     (await authenticateAccount("email", "old@example.com", "Password123"))?.id,
     account.id,
   );
+  const code = demoCodes.issue("bind", "phone", "13800138000");
   assert.equal(
     (
       await bindAccountContact(
@@ -150,8 +201,42 @@ test("earlier single-contact demo accounts stay usable", async () => {
         "phone",
         "13800138000",
         "Password123",
+        code,
       )
     ).phone,
     "13800138000",
+  );
+});
+
+test("demo codes expire, have resend cooldown, and reject repeated guesses", () => {
+  let now = 1000;
+  const codes = new DemoVerification(() => now);
+  const code = codes.issue("register", "phone", "13700137000");
+  assert.equal(codes.remaining("register", "phone", "13700137000"), 60);
+  assert.throws(
+    () => codes.issue("register", "phone", "13700137000"),
+    /60 秒后/,
+  );
+  for (let i = 0; i < 5; i++)
+    assert.throws(
+      () =>
+        codes.verify(
+          "register",
+          "phone",
+          "13700137000",
+          "000000" === code ? "111111" : "000000",
+        ),
+      /不正确/,
+    );
+  assert.throws(
+    () => codes.verify("register", "phone", "13700137000", code),
+    /次数过多/,
+  );
+  now += 60_000;
+  const next = codes.issue("register", "phone", "13700137000");
+  now += 5 * 60_000;
+  assert.throws(
+    () => codes.verify("register", "phone", "13700137000", next),
+    /已过期/,
   );
 });

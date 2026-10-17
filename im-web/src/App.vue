@@ -5,7 +5,9 @@ import {
   accountStateKey,
   accounts,
   authenticateAccount,
+  authenticateWithCode,
   bindAccountContact,
+  normalizeContact,
   registerAccount,
   sessionAccount,
   sessionKey,
@@ -14,6 +16,7 @@ import {
   type ContactType,
   type DemoAccount,
 } from "./demoAuth";
+import { demoCodes, type CodePurpose } from "./demoVerification";
 import {
   clock,
   initialState,
@@ -43,9 +46,13 @@ const data = ref<DemoState>(load(currentAccount.value));
 const loggedIn = computed(() => currentAccount.value !== null);
 const authMode = ref<"login" | "register">("login");
 const contactType = ref<ContactType>("phone");
+const loginMethod = ref<"password" | "code">("password");
 const authIdentifier = ref("");
 const authPhone = ref("");
 const authEmail = ref("");
+const authPhoneCode = ref("");
+const authEmailCode = ref("");
+const authLoginCode = ref("");
 const authPassword = ref("");
 const authConfirm = ref("");
 const authName = ref("");
@@ -56,9 +63,35 @@ const authBusy = ref(false);
 const showPassword = ref(false);
 const bindValue = ref("");
 const bindPassword = ref("");
+const bindCode = ref("");
 const bindError = ref("");
 const bindSuccess = ref("");
 const bindBusy = ref(false);
+type CodeSlot = "phone" | "email" | "login" | "bind";
+const codeHints = ref<Record<CodeSlot, string>>({
+  phone: "",
+  email: "",
+  login: "",
+  bind: "",
+});
+const codeTick = ref(Date.now());
+const codeInterval = setInterval(() => (codeTick.value = Date.now()), 1000);
+watch(authPhone, () => {
+  authPhoneCode.value = "";
+  codeHints.value.phone = "";
+});
+watch(authEmail, () => {
+  authEmailCode.value = "";
+  codeHints.value.email = "";
+});
+watch(authIdentifier, () => {
+  authLoginCode.value = "";
+  codeHints.value.login = "";
+});
+watch(bindValue, () => {
+  bindCode.value = "";
+  codeHints.value.bind = "";
+});
 const missingContact = computed<ContactType | null>(() =>
   !currentAccount.value?.phone
     ? "phone"
@@ -228,6 +261,45 @@ function switchAuthMode(next: "login" | "register") {
   authSuccess.value = "";
   authPassword.value = "";
   authConfirm.value = "";
+  authPhoneCode.value = "";
+  authEmailCode.value = "";
+  authLoginCode.value = "";
+  codeHints.value = { phone: "", email: "", login: "", bind: "" };
+}
+function waitSeconds(
+  purpose: CodePurpose,
+  type: ContactType,
+  raw: string,
+): number {
+  void codeTick.value;
+  return demoCodes.remaining(purpose, type, normalizeContact(type, raw));
+}
+function sendDemoCode(
+  purpose: CodePurpose,
+  type: ContactType,
+  raw: string,
+  slot: CodeSlot,
+) {
+  authError.value = "";
+  bindError.value = "";
+  try {
+    if (!validContact(type, raw))
+      throw new Error(
+        type === "phone"
+          ? "请先输入正确的中国大陆手机号"
+          : "请先输入正确的邮箱地址",
+      );
+    const code = demoCodes.issue(purpose, type, normalizeContact(type, raw));
+    codeHints.value[slot] = `演示验证码：${code}（5 分钟有效；不会真实发送）`;
+    codeTick.value = Date.now();
+  } catch (error) {
+    if (slot === "bind")
+      bindError.value =
+        error instanceof Error ? error.message : "无法获取验证码";
+    else
+      authError.value =
+        error instanceof Error ? error.message : "无法获取验证码";
+  }
 }
 async function submitAuth() {
   if (authBusy.value) return;
@@ -246,6 +318,8 @@ async function submitAuth() {
         handle: authHandle.value,
         phone: authPhone.value,
         email: authEmail.value,
+        phoneCode: authPhoneCode.value,
+        emailCode: authEmailCode.value,
         password: authPassword.value,
       });
       if (!hadAccounts) {
@@ -257,20 +331,24 @@ async function submitAuth() {
       contactType.value = account.phone ? "phone" : "email";
       authIdentifier.value = account.phone || account.email || "";
       switchAuthMode("login");
-      authSuccess.value = "注册成功！请用手机号或邮箱及密码登录。";
+      authSuccess.value = "注册成功！请用已验证的手机号或邮箱登录。";
       return;
     }
-    if (
-      !validContact(contactType.value, authIdentifier.value) ||
-      !authPassword.value
-    )
-      throw new Error("请输入有效的手机号或邮箱及密码");
-    const account = await authenticateAccount(
-      contactType.value,
-      authIdentifier.value,
-      authPassword.value,
-    );
-    if (!account) throw new Error("账号或密码不正确，请检查后重试");
+    if (!validContact(contactType.value, authIdentifier.value))
+      throw new Error("请输入有效的手机号或邮箱");
+    const account =
+      loginMethod.value === "password"
+        ? await authenticateAccount(
+            contactType.value,
+            authIdentifier.value,
+            authPassword.value,
+          )
+        : authenticateWithCode(
+            contactType.value,
+            authIdentifier.value,
+            authLoginCode.value,
+          );
+    if (!account) throw new Error("账号或凭据不正确，请检查后重试");
     data.value = load(account);
     data.value.displayName = account.name;
     data.value.handle = account.handle;
@@ -294,6 +372,7 @@ function signOut() {
   currentAccount.value = null;
   authPassword.value = "";
   bindPassword.value = "";
+  bindCode.value = "";
   bindValue.value = "";
   bindError.value = "";
   bindSuccess.value = "";
@@ -311,10 +390,12 @@ async function bindContact() {
       type,
       bindValue.value,
       bindPassword.value,
+      bindCode.value,
     );
     currentAccount.value = updated;
     bindValue.value = "";
     bindPassword.value = "";
+    bindCode.value = "";
     bindSuccess.value =
       type === "phone"
         ? "手机号已关联到此演示账号，可用于登录"
@@ -560,6 +641,7 @@ document.addEventListener("visibilitychange", visibility);
 onBeforeUnmount(() => {
   stopVoice();
   clearTimeout(toastTimer);
+  clearInterval(codeInterval);
   document.removeEventListener("visibilitychange", visibility);
 });
 </script>
@@ -593,8 +675,8 @@ onBeforeUnmount(() => {
         <p>
           {{
             authMode === "login"
-              ? "用注册时的手机号或邮箱登录。"
-              : "先注册账号，再登录你的工作空间。"
+              ? "用已绑定的手机号或邮箱登录。"
+              : "验证手机号或邮箱后，创建你的工作空间。"
           }}
         </p>
         <div
@@ -663,6 +745,29 @@ onBeforeUnmount(() => {
             maxlength="20"
             placeholder="请输入 11 位手机号"
           />
+          <div v-if="authPhone.trim()" class="verification-field">
+            <input
+              v-model="authPhoneCode"
+              aria-label="手机验证码"
+              inputmode="numeric"
+              maxlength="6"
+              placeholder="输入手机验证码"
+            />
+            <button
+              type="button"
+              :disabled="waitSeconds('register', 'phone', authPhone) > 0"
+              @click="sendDemoCode('register', 'phone', authPhone, 'phone')"
+            >
+              {{
+                waitSeconds("register", "phone", authPhone)
+                  ? `${waitSeconds("register", "phone", authPhone)} 秒`
+                  : "获取验证码"
+              }}
+            </button>
+          </div>
+          <p v-if="codeHints.phone" class="demo-code" role="status">
+            {{ codeHints.phone }}
+          </p>
           <label for="auth-email">邮箱地址 <span>可选</span></label>
           <input
             id="auth-email"
@@ -673,6 +778,29 @@ onBeforeUnmount(() => {
             maxlength="254"
             placeholder="name@example.com"
           />
+          <div v-if="authEmail.trim()" class="verification-field">
+            <input
+              v-model="authEmailCode"
+              aria-label="邮箱验证码"
+              inputmode="numeric"
+              maxlength="6"
+              placeholder="输入邮箱验证码"
+            />
+            <button
+              type="button"
+              :disabled="waitSeconds('register', 'email', authEmail) > 0"
+              @click="sendDemoCode('register', 'email', authEmail, 'email')"
+            >
+              {{
+                waitSeconds("register", "email", authEmail)
+                  ? `${waitSeconds("register", "email", authEmail)} 秒`
+                  : "获取验证码"
+              }}
+            </button>
+          </div>
+          <p v-if="codeHints.email" class="demo-code" role="status">
+            {{ codeHints.email }}
+          </p>
         </template>
         <label v-if="authMode === 'login'" for="auth-identifier">{{
           contactType === "phone" ? "手机号" : "邮箱地址"
@@ -690,8 +818,69 @@ onBeforeUnmount(() => {
           :maxlength="contactType === 'phone' ? 20 : 254"
           required
         />
-        <label for="auth-password">密码</label>
-        <div class="password-field">
+        <div v-if="authMode === 'login'" class="login-method">
+          <button
+            type="button"
+            :class="{ active: loginMethod === 'password' }"
+            @click="
+              loginMethod = 'password';
+              authError = '';
+            "
+          >
+            密码登录
+          </button>
+          <button
+            type="button"
+            :class="{ active: loginMethod === 'code' }"
+            @click="
+              loginMethod = 'code';
+              authError = '';
+            "
+          >
+            验证码登录
+          </button>
+        </div>
+        <template v-if="authMode === 'login' && loginMethod === 'code'">
+          <label for="auth-login-code">{{
+            contactType === "phone" ? "手机验证码" : "邮箱验证码"
+          }}</label>
+          <div class="verification-field">
+            <input
+              id="auth-login-code"
+              v-model="authLoginCode"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="6"
+              placeholder="输入 6 位验证码"
+              required
+            />
+            <button
+              type="button"
+              :disabled="waitSeconds('login', contactType, authIdentifier) > 0"
+              @click="
+                sendDemoCode('login', contactType, authIdentifier, 'login')
+              "
+            >
+              {{
+                waitSeconds("login", contactType, authIdentifier)
+                  ? `${waitSeconds("login", contactType, authIdentifier)} 秒`
+                  : "获取验证码"
+              }}
+            </button>
+          </div>
+          <p v-if="codeHints.login" class="demo-code" role="status">
+            {{ codeHints.login }}
+          </p>
+        </template>
+        <label
+          v-if="authMode === 'register' || loginMethod === 'password'"
+          for="auth-password"
+          >密码</label
+        >
+        <div
+          v-if="authMode === 'register' || loginMethod === 'password'"
+          class="password-field"
+        >
           <input
             id="auth-password"
             v-model="authPassword"
@@ -732,7 +921,13 @@ onBeforeUnmount(() => {
         <p v-if="authError" class="error-text" role="alert">{{ authError }}</p>
         <button class="primary-button full" type="submit" :disabled="authBusy">
           {{
-            authBusy ? "处理中…" : authMode === "login" ? "登录" : "注册账号"
+            authBusy
+              ? "处理中…"
+              : authMode === "register"
+                ? "注册账号"
+                : loginMethod === "code"
+                  ? "验证码登录"
+                  : "密码登录"
           }}
           <AppIcon name="arrowRight" :size="17" />
         </button>
@@ -746,7 +941,7 @@ onBeforeUnmount(() => {
           }}
         </button>
         <p class="auth-disclaimer">
-          这是本机演示账号：绑定不发送验证码，也没有真实身份验证。请使用测试联系方式和密码，正式认证需接入后端。
+          演示验证码会显示在页面上，不发送短信或邮件；它不能验证联系方式归属。请用测试联系方式和密码，真实发送与校验需接入后端。
         </p>
       </form>
     </div>
@@ -1461,6 +1656,33 @@ onBeforeUnmount(() => {
               "
               required
             />
+            <label for="bind-code">{{
+              missingContact === "phone" ? "手机验证码" : "邮箱验证码"
+            }}</label>
+            <div class="verification-field">
+              <input
+                id="bind-code"
+                v-model="bindCode"
+                inputmode="numeric"
+                maxlength="6"
+                placeholder="输入 6 位验证码"
+                required
+              />
+              <button
+                type="button"
+                :disabled="waitSeconds('bind', missingContact, bindValue) > 0"
+                @click="sendDemoCode('bind', missingContact, bindValue, 'bind')"
+              >
+                {{
+                  waitSeconds("bind", missingContact, bindValue)
+                    ? `${waitSeconds("bind", missingContact, bindValue)} 秒`
+                    : "获取验证码"
+                }}
+              </button>
+            </div>
+            <p v-if="codeHints.bind" class="demo-code" role="status">
+              {{ codeHints.bind }}
+            </p>
             <label for="bind-password">当前密码</label>
             <input
               id="bind-password"
@@ -1477,7 +1699,7 @@ onBeforeUnmount(() => {
               {{ bindBusy ? "处理中…" : "关联到当前账号" }}
             </button>
             <small
-              >演示绑定不验证号码或邮箱所有权；正式产品需要短信或邮件验证码。</small
+              >演示验证码仅显示在页面上；正式绑定需由服务端发送并验证。</small
             >
           </form>
           <p v-if="bindSuccess" class="success-text" role="status">
