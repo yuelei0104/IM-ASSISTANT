@@ -1,5 +1,30 @@
-# Vue 3 + TypeScript + Vite
+# IM 助手 · 网页端
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Vue 3 + TypeScript + Vite 的前端演示，包含手机号或邮箱注册与登录、会话消息、联系人、好友申请、讨论室、通知、待办、设置和「接上讨论」侧栏。
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+## 本地运行
+
+在 `im-web` 目录执行：
+
+```bash
+npm ci
+npm run dev
+```
+
+打开终端显示的本地地址。构建检查：`npm run build`；账号流程检查：`npm test`。
+
+## 体验路径
+
+1. 未登录时默认显示登录页；没有账号时进入注册页，先填写昵称、唯一账号、测试密码，以及至少一种联系方式。资料格式和唯一性检查通过后进入验证页，分别获取并填写每个联系方式的演示验证码；验证成功才创建账号。手机号和邮箱都验证后关联同一账号；注册后可用任一种联系方式通过密码或验证码登录。
+2. 在消息页发送本地演示消息；打开「接上讨论」查看消息线索并创建待办。
+3. 在联系人页开始私聊；在好友申请页处理何雨桐的邀请，或通过 `@heyutong` 尝试搜索账号。
+4. 创建讨论室并邀请自己的好友；通知和待办中的「查看来源」可定位原消息。
+5. 在设置页补绑缺少的手机号或邮箱（需验证码和当前密码），之后可用任一联系方式登录；字号、关注词、译文显示与时区也保存在浏览器本地。
+
+## 接入边界
+
+这是可交互的**前端演示**，尚未连接后端。验证码只在当前页面显示，不会发送短信或邮件，无法证明对联系方式的所有权；验证码仅保存在当前页面内存中，5 分钟过期、60 秒后可重发、最多尝试 5 次。账号与加盐密码摘要保存在当前浏览器本地，不具备服务端身份认证的安全性，也不能跨设备登录。请只用测试手机号、测试邮箱和非日常密码，不要输入敏感消息。每个演示账号的数据分别保存在本机；刷新页面会保留数据，但未完成的验证码会失效。真实注册、唯一性、验证码发送和服务端校验、找回密码及登录态均需后端实现。
+
+浏览器支持 Web Speech API 且授予麦克风权限时，可以将本人的语音转写到输入框；临时字幕只在本机显示，最终文本需要用户手动点击发送。示例译文为预置数据；真实语音、翻译、AI 摘要、推送与跨设备同步均需后续服务端接口。讨论线索只引用已有演示消息，不代表模型生成的分析结果。
+
+建议后端接入顺序：认证与用户资料 → 好友申请/关系 → 会话与消息 WebSocket → 群成员权限 → 通知/待办 → 语音与翻译 → AI 摘要。接入时将 `src/demo.ts` 的演示数据与 `src/App.vue` 的本地操作替换为 API/实时事件，并处理服务端时间、分页、重连、消息状态与权限校验。
