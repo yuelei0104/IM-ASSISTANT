@@ -1850,6 +1850,14 @@ svg {
   margin-top: 22px;
   padding: 13px;
 }
+.auth-back {
+  display: block;
+  border: 0;
+  background: transparent;
+  color: #258e94;
+  font-size: 12px;
+  margin: 15px auto 0;
+}
 .auth-switch {
   display: block;
   border: 0;

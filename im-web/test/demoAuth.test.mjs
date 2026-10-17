@@ -11,6 +11,7 @@ import {
   sessionAccount,
   sessionKey,
   validContact,
+  validateRegistration,
 } from "../src/demoAuth.ts";
 import { demoCodes, DemoVerification } from "../src/demoVerification.ts";
 
@@ -90,6 +91,36 @@ test("both contacts require separate codes and log in to the same account", asyn
     }),
     /已绑定/,
   );
+});
+
+test("registration details are checked before issuing codes or creating an account", async () => {
+  items.clear();
+  const draft = {
+    name: " 张三 ",
+    handle: "Zhang_San",
+    phone: "138 0013 8000",
+    email: " Zhang@Example.COM ",
+    password: "Testpass123",
+  };
+  assert.deepEqual(validateRegistration(draft), {
+    name: "张三",
+    handle: "zhang_san",
+    phone: "13800138000",
+    email: "zhang@example.com",
+  });
+  assert.equal(accounts().length, 0);
+  assert.throws(
+    () => validateRegistration({ ...draft, phone: "bad" }),
+    /手机号/,
+  );
+  assert.throws(
+    () => validateRegistration({ ...draft, password: "short" }),
+    /密码/,
+  );
+  const account = await registerWithCodes(draft);
+  assert.equal(accounts().length, 1);
+  assert.throws(() => validateRegistration(draft), /已绑定/);
+  assert.equal(account.handle, "zhang_san");
 });
 
 test("binding a missing contact requires the current password and its code", async () => {

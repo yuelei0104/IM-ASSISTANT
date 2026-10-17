@@ -13,8 +13,10 @@ import {
   sessionKey,
   validContact,
   validPassword,
+  validateRegistration,
   type ContactType,
   type DemoAccount,
+  type RegistrationInput,
 } from "./demoAuth";
 import { demoCodes, type CodePurpose } from "./demoVerification";
 import {
@@ -45,6 +47,8 @@ const currentAccount = ref<DemoAccount | null>(sessionAccount());
 const data = ref<DemoState>(load(currentAccount.value));
 const loggedIn = computed(() => currentAccount.value !== null);
 const authMode = ref<"login" | "register">("login");
+const registerStep = ref<"details" | "verify">("details");
+const pendingRegistration = ref<RegistrationInput | null>(null);
 const contactType = ref<ContactType>("phone");
 const loginMethod = ref<"password" | "code">("password");
 const authIdentifier = ref("");
@@ -256,7 +260,12 @@ function openChat(id: string, source?: string) {
   } else nextTick(scrollBottom);
 }
 function switchAuthMode(next: "login" | "register") {
+  const pending = pendingRegistration.value;
+  if (pending?.phone) demoCodes.consume("register", "phone", pending.phone);
+  if (pending?.email) demoCodes.consume("register", "email", pending.email);
   authMode.value = next;
+  registerStep.value = "details";
+  pendingRegistration.value = null;
   authError.value = "";
   authSuccess.value = "";
   authPassword.value = "";
@@ -265,6 +274,18 @@ function switchAuthMode(next: "login" | "register") {
   authEmailCode.value = "";
   authLoginCode.value = "";
   codeHints.value = { phone: "", email: "", login: "", bind: "" };
+}
+function editRegistration() {
+  const pending = pendingRegistration.value;
+  if (pending?.phone) demoCodes.consume("register", "phone", pending.phone);
+  if (pending?.email) demoCodes.consume("register", "email", pending.email);
+  registerStep.value = "details";
+  pendingRegistration.value = null;
+  authPhoneCode.value = "";
+  authEmailCode.value = "";
+  codeHints.value.phone = "";
+  codeHints.value.email = "";
+  authError.value = "";
 }
 function waitSeconds(
   purpose: CodePurpose,
@@ -308,19 +329,37 @@ async function submitAuth() {
   authBusy.value = true;
   try {
     if (authMode.value === "register") {
-      if (!validPassword(authPassword.value))
-        throw new Error("密码需为 8–72 位，并包含字母和数字");
-      if (authPassword.value !== authConfirm.value)
-        throw new Error("两次输入的密码不一致");
+      if (registerStep.value === "details") {
+        if (!validPassword(authPassword.value))
+          throw new Error("密码需为 8–72 位，并包含字母和数字");
+        if (authPassword.value !== authConfirm.value)
+          throw new Error("两次输入的密码不一致");
+        const input = {
+          name: authName.value,
+          handle: authHandle.value,
+          phone: authPhone.value,
+          email: authEmail.value,
+          password: authPassword.value,
+        };
+        const { name, handle, phone, email } = validateRegistration(input);
+        pendingRegistration.value = {
+          name,
+          handle,
+          phone,
+          email,
+          password: input.password,
+        };
+        authPhoneCode.value = "";
+        authEmailCode.value = "";
+        registerStep.value = "verify";
+        return;
+      }
+      if (!pendingRegistration.value) throw new Error("请先填写注册资料");
       const hadAccounts = accounts().length > 0;
       const account = await registerAccount({
-        name: authName.value,
-        handle: authHandle.value,
-        phone: authPhone.value,
-        email: authEmail.value,
+        ...pendingRegistration.value,
         phoneCode: authPhoneCode.value,
         emailCode: authEmailCode.value,
-        password: authPassword.value,
       });
       if (!hadAccounts) {
         try {
@@ -671,12 +710,22 @@ onBeforeUnmount(() => {
     <div class="auth-form-wrap">
       <form class="auth-card" @submit.prevent="submitAuth">
         <span class="eyebrow-chip">本地交互演示</span>
-        <h2>{{ authMode === "login" ? "欢迎回来" : "创建你的账号" }}</h2>
+        <h2>
+          {{
+            authMode === "login"
+              ? "欢迎回来"
+              : registerStep === "verify"
+                ? "验证联系方式"
+                : "创建你的账号"
+          }}
+        </h2>
         <p>
           {{
             authMode === "login"
               ? "用已绑定的手机号或邮箱登录。"
-              : "验证手机号或邮箱后，创建你的工作空间。"
+              : registerStep === "verify"
+                ? "确认验证码后，才会创建你的账号。"
+                : "先填写注册资料，下一步验证联系方式。"
           }}
         </p>
         <div
@@ -710,7 +759,7 @@ onBeforeUnmount(() => {
             邮箱
           </button>
         </div>
-        <template v-if="authMode === 'register'">
+        <template v-if="authMode === 'register' && registerStep === 'details'">
           <label for="auth-name">昵称</label>
           <input
             id="auth-name"
@@ -745,29 +794,6 @@ onBeforeUnmount(() => {
             maxlength="20"
             placeholder="请输入 11 位手机号"
           />
-          <div v-if="authPhone.trim()" class="verification-field">
-            <input
-              v-model="authPhoneCode"
-              aria-label="手机验证码"
-              inputmode="numeric"
-              maxlength="6"
-              placeholder="输入手机验证码"
-            />
-            <button
-              type="button"
-              :disabled="waitSeconds('register', 'phone', authPhone) > 0"
-              @click="sendDemoCode('register', 'phone', authPhone, 'phone')"
-            >
-              {{
-                waitSeconds("register", "phone", authPhone)
-                  ? `${waitSeconds("register", "phone", authPhone)} 秒`
-                  : "获取验证码"
-              }}
-            </button>
-          </div>
-          <p v-if="codeHints.phone" class="demo-code" role="status">
-            {{ codeHints.phone }}
-          </p>
           <label for="auth-email">邮箱地址 <span>可选</span></label>
           <input
             id="auth-email"
@@ -778,29 +804,97 @@ onBeforeUnmount(() => {
             maxlength="254"
             placeholder="name@example.com"
           />
-          <div v-if="authEmail.trim()" class="verification-field">
-            <input
-              v-model="authEmailCode"
-              aria-label="邮箱验证码"
-              inputmode="numeric"
-              maxlength="6"
-              placeholder="输入邮箱验证码"
-            />
-            <button
-              type="button"
-              :disabled="waitSeconds('register', 'email', authEmail) > 0"
-              @click="sendDemoCode('register', 'email', authEmail, 'email')"
-            >
-              {{
-                waitSeconds("register", "email", authEmail)
-                  ? `${waitSeconds("register", "email", authEmail)} 秒`
-                  : "获取验证码"
-              }}
-            </button>
-          </div>
-          <p v-if="codeHints.email" class="demo-code" role="status">
-            {{ codeHints.email }}
+        </template>
+        <template
+          v-if="
+            authMode === 'register' &&
+            registerStep === 'verify' &&
+            pendingRegistration
+          "
+        >
+          <p class="auth-contact-hint">
+            资料已检查。请验证以下每一项联系方式；返回修改资料会清除已获取的验证码。
           </p>
+          <template v-if="pendingRegistration.phone">
+            <label for="auth-phone-code"
+              >手机号 · {{ pendingRegistration.phone }}</label
+            >
+            <div class="verification-field">
+              <input
+                id="auth-phone-code"
+                v-model="authPhoneCode"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="6"
+                placeholder="输入手机验证码"
+                required
+              />
+              <button
+                type="button"
+                :disabled="
+                  waitSeconds('register', 'phone', pendingRegistration.phone) >
+                  0
+                "
+                @click="
+                  sendDemoCode(
+                    'register',
+                    'phone',
+                    pendingRegistration.phone!,
+                    'phone',
+                  )
+                "
+              >
+                {{
+                  waitSeconds("register", "phone", pendingRegistration.phone)
+                    ? `${waitSeconds("register", "phone", pendingRegistration.phone)} 秒`
+                    : "获取验证码"
+                }}
+              </button>
+            </div>
+            <p v-if="codeHints.phone" class="demo-code" role="status">
+              {{ codeHints.phone }}
+            </p>
+          </template>
+          <template v-if="pendingRegistration.email">
+            <label for="auth-email-code"
+              >邮箱 · {{ pendingRegistration.email }}</label
+            >
+            <div class="verification-field">
+              <input
+                id="auth-email-code"
+                v-model="authEmailCode"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                maxlength="6"
+                placeholder="输入邮箱验证码"
+                required
+              />
+              <button
+                type="button"
+                :disabled="
+                  waitSeconds('register', 'email', pendingRegistration.email) >
+                  0
+                "
+                @click="
+                  sendDemoCode(
+                    'register',
+                    'email',
+                    pendingRegistration.email!,
+                    'email',
+                  )
+                "
+              >
+                {{
+                  waitSeconds("register", "email", pendingRegistration.email)
+                    ? `${waitSeconds("register", "email", pendingRegistration.email)} 秒`
+                    : "获取验证码"
+                }}
+              </button>
+            </div>
+            <p v-if="codeHints.email" class="demo-code" role="status">
+              {{ codeHints.email }}
+            </p>
+          </template>
         </template>
         <label v-if="authMode === 'login'" for="auth-identifier">{{
           contactType === "phone" ? "手机号" : "邮箱地址"
@@ -873,12 +967,18 @@ onBeforeUnmount(() => {
           </p>
         </template>
         <label
-          v-if="authMode === 'register' || loginMethod === 'password'"
+          v-if="
+            (authMode === 'register' && registerStep === 'details') ||
+            (authMode === 'login' && loginMethod === 'password')
+          "
           for="auth-password"
           >密码</label
         >
         <div
-          v-if="authMode === 'register' || loginMethod === 'password'"
+          v-if="
+            (authMode === 'register' && registerStep === 'details') ||
+            (authMode === 'login' && loginMethod === 'password')
+          "
           class="password-field"
         >
           <input
@@ -904,7 +1004,7 @@ onBeforeUnmount(() => {
             <AppIcon :name="showPassword ? 'eyeoff' : 'eye'" :size="17" />
           </button>
         </div>
-        <template v-if="authMode === 'register'">
+        <template v-if="authMode === 'register' && registerStep === 'details'">
           <label for="auth-confirm">确认密码</label>
           <input
             id="auth-confirm"
@@ -924,12 +1024,22 @@ onBeforeUnmount(() => {
             authBusy
               ? "处理中…"
               : authMode === "register"
-                ? "注册账号"
+                ? registerStep === "details"
+                  ? "下一步 · 验证联系方式"
+                  : "验证并创建账号"
                 : loginMethod === "code"
                   ? "验证码登录"
                   : "密码登录"
           }}
           <AppIcon name="arrowRight" :size="17" />
+        </button>
+        <button
+          v-if="authMode === 'register' && registerStep === 'verify'"
+          class="auth-back"
+          type="button"
+          @click="editRegistration"
+        >
+          返回修改资料
         </button>
         <button
           class="auth-switch"

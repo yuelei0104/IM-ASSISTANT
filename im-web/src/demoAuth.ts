@@ -98,7 +98,7 @@ async function hashPassword(password: string, salt: string): Promise<string> {
   return hex(new Uint8Array(bits));
 }
 
-export async function registerAccount(input: {
+export type RegistrationInput = {
   name: string;
   handle: string;
   phone?: string;
@@ -106,7 +106,9 @@ export async function registerAccount(input: {
   phoneCode?: string;
   emailCode?: string;
   password: string;
-}): Promise<DemoAccount> {
+};
+
+export function validateRegistration(input: RegistrationInput) {
   const name = input.name.trim();
   const handle = input.handle.trim().toLowerCase();
   const phone = normalizeContact("phone", input.phone || "");
@@ -128,6 +130,14 @@ export async function registerAccount(input: {
     throw new Error("此邮箱已绑定其他账号");
   if (existing.some((account) => account.handle === handle))
     throw new Error("此唯一账号已被使用");
+  return { name, handle, phone, email };
+}
+
+export async function registerAccount(
+  input: RegistrationInput,
+): Promise<DemoAccount> {
+  const { name, handle, phone, email } = validateRegistration(input);
+  const existing = accounts();
   if (phone)
     demoCodes.verify("register", "phone", phone, input.phoneCode || "");
   if (email)
