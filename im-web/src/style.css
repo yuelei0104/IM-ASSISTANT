@@ -1638,10 +1638,10 @@ svg {
 .auth-form-wrap {
   display: grid;
   place-items: center;
-  padding: 40px;
+  padding: 32px 40px;
 }
 .auth-card {
-  width: min(380px, 100%);
+  width: min(400px, 100%);
 }
 .eyebrow-chip {
   font-size: 11px;
@@ -1661,13 +1661,66 @@ svg {
   line-height: 1.6;
 }
 .auth-card label {
-  margin-top: 28px;
+  margin-top: 16px;
 }
 .auth-card > input {
   font-size: 13px;
 }
+.auth-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 4px;
+  margin: 22px 0 18px;
+  background: #f1f6f7;
+  border-radius: 10px;
+}
+.auth-tabs button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  border-radius: 7px;
+  padding: 9px;
+  color: #8199a3;
+  font-size: 12px;
+}
+.auth-tabs button.active {
+  background: #fff;
+  color: #238f96;
+  font-weight: 700;
+  box-shadow: 0 2px 8px #213f4714;
+}
+.password-field {
+  display: flex;
+  align-items: center;
+  border: 1px solid #e1e9eb;
+  border-radius: 9px;
+}
+.password-field:focus-within {
+  border-color: #72c4c4;
+}
+.password-field input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  padding: 11px 12px;
+  background: transparent;
+  font-size: 12px;
+}
+.password-field button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #91a6af;
+  padding: 8px 11px;
+}
+.auth-card .success-text {
+  margin-top: 14px;
+  color: #258e72;
+}
 .auth-card .primary-button {
-  margin-top: 30px;
+  margin-top: 22px;
   padding: 13px;
 }
 .auth-switch {
@@ -1684,7 +1737,7 @@ svg {
   text-align: center;
   border-top: 1px solid #edf1f2;
   padding-top: 20px;
-  margin-top: 30px;
+  margin-top: 20px;
 }
 .error-text {
   color: #d46458 !important;

@@ -2,6 +2,19 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import AppIcon from "./components/AppIcon.vue";
 import {
+  accountStateKey,
+  accounts,
+  authenticateAccount,
+  normalizeContact,
+  registerAccount,
+  sessionAccount,
+  sessionKey,
+  validContact,
+  validPassword,
+  type ContactType,
+  type DemoAccount,
+} from "./demoAuth";
+import {
   clock,
   initialState,
   selfId,
@@ -14,9 +27,10 @@ import {
 type Page = "chat" | "contacts" | "requests" | "notices" | "tasks" | "settings";
 type Modal = "group" | "invite" | "friend" | null;
 const key = "im-assistant-demo-v1";
-function load(): DemoState {
+function load(account: DemoAccount | null): DemoState {
+  if (!account) return initialState();
   try {
-    const saved = localStorage.getItem(key);
+    const saved = localStorage.getItem(accountStateKey(account.id));
     if (saved) {
       const v = JSON.parse(saved);
       if (v.people && v.conversations && v.preferences) return v;
@@ -24,12 +38,22 @@ function load(): DemoState {
   } catch {}
   return initialState();
 }
-const data = ref<DemoState>(load());
-const loggedIn = ref(sessionStorage.getItem("im-demo-login") === "yes");
-const authMode = ref<"login" | "register">("login");
+const currentAccount = ref<DemoAccount | null>(sessionAccount());
+const data = ref<DemoState>(load(currentAccount.value));
+const loggedIn = computed(() => currentAccount.value !== null);
+const authMode = ref<"login" | "register">(
+  accounts().length ? "login" : "register",
+);
+const contactType = ref<ContactType>("phone");
+const authIdentifier = ref("");
+const authPassword = ref("");
+const authConfirm = ref("");
 const authName = ref("");
 const authHandle = ref("");
 const authError = ref("");
+const authSuccess = ref("");
+const authBusy = ref(false);
+const showPassword = ref(false);
 const page = ref<Page>("chat");
 const activeId = ref("product");
 const search = ref("");
@@ -66,7 +90,11 @@ watch(
   data,
   (v) => {
     try {
-      localStorage.setItem(key, JSON.stringify(v));
+      if (currentAccount.value)
+        localStorage.setItem(
+          accountStateKey(currentAccount.value.id),
+          JSON.stringify(v),
+        );
     } catch {}
   },
   { deep: true },
@@ -182,35 +210,86 @@ function openChat(id: string, source?: string) {
     setTimeout(() => (focusId.value = ""), 3000);
   } else nextTick(scrollBottom);
 }
-function signIn() {
-  const name = authName.value.trim();
-  if (!name) {
-    authError.value = "请输入昵称";
-    return;
+function switchAuthMode(next: "login" | "register") {
+  authMode.value = next;
+  authError.value = "";
+  authSuccess.value = "";
+  authPassword.value = "";
+  authConfirm.value = "";
+}
+async function submitAuth() {
+  if (authBusy.value) return;
+  authError.value = "";
+  authSuccess.value = "";
+  authBusy.value = true;
+  try {
+    if (authMode.value === "register") {
+      if (!validContact(contactType.value, authIdentifier.value))
+        throw new Error(
+          contactType.value === "phone"
+            ? "请输入正确的中国大陆手机号"
+            : "请输入正确的邮箱地址",
+        );
+      if (!validPassword(authPassword.value))
+        throw new Error("密码需为 8–72 位，并包含字母和数字");
+      if (authPassword.value !== authConfirm.value)
+        throw new Error("两次输入的密码不一致");
+      const hadAccounts = accounts().length > 0;
+      const account = await registerAccount({
+        name: authName.value,
+        handle: authHandle.value,
+        contactType: contactType.value,
+        contact: authIdentifier.value,
+        password: authPassword.value,
+      });
+      if (!hadAccounts) {
+        try {
+          const legacy = localStorage.getItem(key);
+          if (legacy) localStorage.setItem(accountStateKey(account.id), legacy);
+        } catch {}
+      }
+      authIdentifier.value = normalizeContact(
+        contactType.value,
+        authIdentifier.value,
+      );
+      switchAuthMode("login");
+      authSuccess.value = "注册成功！请用刚才的手机号或邮箱及密码登录。";
+      return;
+    }
+    if (
+      !validContact(contactType.value, authIdentifier.value) ||
+      !authPassword.value
+    )
+      throw new Error("请输入有效的手机号或邮箱及密码");
+    const account = await authenticateAccount(
+      contactType.value,
+      authIdentifier.value,
+      authPassword.value,
+    );
+    if (!account) throw new Error("账号或密码不正确，请检查后重试");
+    data.value = load(account);
+    data.value.displayName = account.name;
+    data.value.handle = account.handle;
+    data.value.people[0]!.name = account.name;
+    data.value.people[0]!.handle = account.handle;
+    data.value.people[0]!.initials = account.name[0]!;
+    sessionStorage.setItem(sessionKey, account.id);
+    currentAccount.value = account;
+    authPassword.value = "";
+    nextTick(scrollBottom);
+  } catch (error) {
+    authError.value =
+      error instanceof Error ? error.message : "操作失败，请稍后再试";
+  } finally {
+    authBusy.value = false;
   }
-  if (
-    authMode.value === "register" &&
-    !/^[a-zA-Z0-9_]{3,20}$/.test(authHandle.value.trim())
-  ) {
-    authError.value = "账号仅支持 3–20 位字母、数字和下划线";
-    return;
-  }
-  data.value.displayName = name;
-  data.value.people[0]!.name = name;
-  data.value.people[0]!.initials = name[0]!;
-  if (authMode.value === "register") {
-    data.value.handle = authHandle.value.trim();
-    data.value.people[0]!.handle = authHandle.value.trim();
-  }
-  sessionStorage.setItem("im-demo-login", "yes");
-  loggedIn.value = true;
-  nextTick(scrollBottom);
 }
 function signOut() {
   stopVoice();
-  sessionStorage.removeItem("im-demo-login");
-  loggedIn.value = false;
-  authName.value = "";
+  sessionStorage.removeItem(sessionKey);
+  currentAccount.value = null;
+  authPassword.value = "";
+  switchAuthMode("login");
 }
 function send() {
   const text = composer.value.trim();
@@ -474,49 +553,137 @@ onBeforeUnmount(() => {
       <small>IM ASSISTANT · FRONTEND PREVIEW</small>
     </div>
     <div class="auth-form-wrap">
-      <form class="auth-card" @submit.prevent="signIn">
+      <form class="auth-card" @submit.prevent="submitAuth">
         <span class="eyebrow-chip">本地交互演示</span>
-        <h2>{{ authMode === "login" ? "欢迎回来" : "创建你的空间" }}</h2>
-        <p>使用昵称进入演示工作台，体验完整前端流程。</p>
-        <label for="auth-name">你的昵称</label
-        ><input
-          id="auth-name"
-          v-model="authName"
-          autocomplete="nickname"
-          maxlength="24"
-          placeholder="例如：岳蕾"
-        /><template v-if="authMode === 'register'"
-          ><label for="auth-handle">唯一账号</label>
+        <h2>{{ authMode === "login" ? "欢迎回来" : "创建你的账号" }}</h2>
+        <p>
+          {{
+            authMode === "login"
+              ? "用注册时的手机号或邮箱登录。"
+              : "先注册账号，再登录你的工作空间。"
+          }}
+        </p>
+        <div class="auth-tabs" role="group" aria-label="登录方式">
+          <button
+            type="button"
+            :class="{ active: contactType === 'phone' }"
+            :aria-pressed="contactType === 'phone'"
+            @click="
+              contactType = 'phone';
+              authIdentifier = '';
+              authError = '';
+            "
+          >
+            手机号
+          </button>
+          <button
+            type="button"
+            :class="{ active: contactType === 'email' }"
+            :aria-pressed="contactType === 'email'"
+            @click="
+              contactType = 'email';
+              authIdentifier = '';
+              authError = '';
+            "
+          >
+            邮箱
+          </button>
+        </div>
+        <template v-if="authMode === 'register'">
+          <label for="auth-name">昵称</label>
+          <input
+            id="auth-name"
+            v-model="authName"
+            autocomplete="nickname"
+            maxlength="24"
+            placeholder="例如：岳蕾"
+            required
+          />
+          <label for="auth-handle">唯一账号（用于添加好友）</label>
           <div class="input-prefix">
-            <span>@</span
-            ><input
+            <span>@</span>
+            <input
               id="auth-handle"
               v-model="authHandle"
               autocomplete="username"
               maxlength="20"
               placeholder="your_handle"
-            /></div
-        ></template>
+              required
+            />
+          </div>
+        </template>
+        <label for="auth-identifier">{{
+          contactType === "phone" ? "手机号" : "邮箱地址"
+        }}</label>
+        <input
+          id="auth-identifier"
+          v-model="authIdentifier"
+          :type="contactType === 'phone' ? 'tel' : 'email'"
+          :inputmode="contactType === 'phone' ? 'tel' : 'email'"
+          :autocomplete="contactType === 'phone' ? 'tel' : 'email'"
+          :placeholder="
+            contactType === 'phone' ? '请输入 11 位手机号' : 'name@example.com'
+          "
+          :maxlength="contactType === 'phone' ? 20 : 254"
+          required
+        />
+        <label for="auth-password">密码</label>
+        <div class="password-field">
+          <input
+            id="auth-password"
+            v-model="authPassword"
+            :type="showPassword ? 'text' : 'password'"
+            :autocomplete="
+              authMode === 'register' ? 'new-password' : 'current-password'
+            "
+            :placeholder="
+              authMode === 'register'
+                ? '至少 8 位，包含字母和数字'
+                : '请输入密码'
+            "
+            :minlength="authMode === 'register' ? 8 : undefined"
+            required
+          />
+          <button
+            type="button"
+            :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+            @click="showPassword = !showPassword"
+          >
+            <AppIcon :name="showPassword ? 'eyeoff' : 'eye'" :size="17" />
+          </button>
+        </div>
+        <template v-if="authMode === 'register'">
+          <label for="auth-confirm">确认密码</label>
+          <input
+            id="auth-confirm"
+            v-model="authConfirm"
+            :type="showPassword ? 'text' : 'password'"
+            autocomplete="new-password"
+            placeholder="再次输入密码"
+            required
+          />
+        </template>
+        <p v-if="authSuccess" class="success-text" role="status">
+          {{ authSuccess }}
+        </p>
         <p v-if="authError" class="error-text" role="alert">{{ authError }}</p>
-        <button class="primary-button full" type="submit">
-          {{ authMode === "login" ? "进入工作台" : "创建并进入" }}
-          <AppIcon name="arrowRight" :size="17" /></button
-        ><button
+        <button class="primary-button full" type="submit" :disabled="authBusy">
+          {{
+            authBusy ? "处理中…" : authMode === "login" ? "登录" : "注册账号"
+          }}
+          <AppIcon name="arrowRight" :size="17" />
+        </button>
+        <button
           class="auth-switch"
           type="button"
-          @click="
-            authMode = authMode === 'login' ? 'register' : 'login';
-            authError = '';
-          "
+          @click="switchAuthMode(authMode === 'login' ? 'register' : 'login')"
         >
           {{
-            authMode === "login"
-              ? "还没有账号？体验注册界面"
-              : "已有演示账号？返回登录"
+            authMode === "login" ? "还没有账号？先注册" : "已经有账号？去登录"
           }}
         </button>
         <p class="auth-disclaimer">
-          演示登录仅保存在当前浏览器会话，不提供真实身份验证或跨设备同步。
+          这是本机演示账号：不会发送短信或邮件，也没有真实身份验证。请使用测试手机号、邮箱和密码，正式认证需接入后端。
         </p>
       </form>
     </div>
@@ -1195,7 +1362,7 @@ onBeforeUnmount(() => {
               <strong>{{ data.displayName }}</strong
               ><span>@{{ data.handle }}</span>
             </div>
-            <button class="outline-button" @click="signOut">退出演示</button>
+            <button class="outline-button" @click="signOut">退出登录</button>
           </div>
         </div>
         <div class="content-card">
