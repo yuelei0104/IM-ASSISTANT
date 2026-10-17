@@ -5,7 +5,7 @@ import {
   accountStateKey,
   accounts,
   authenticateAccount,
-  normalizeContact,
+  bindAccountContact,
   registerAccount,
   sessionAccount,
   sessionKey,
@@ -41,11 +41,11 @@ function load(account: DemoAccount | null): DemoState {
 const currentAccount = ref<DemoAccount | null>(sessionAccount());
 const data = ref<DemoState>(load(currentAccount.value));
 const loggedIn = computed(() => currentAccount.value !== null);
-const authMode = ref<"login" | "register">(
-  accounts().length ? "login" : "register",
-);
+const authMode = ref<"login" | "register">("login");
 const contactType = ref<ContactType>("phone");
 const authIdentifier = ref("");
+const authPhone = ref("");
+const authEmail = ref("");
 const authPassword = ref("");
 const authConfirm = ref("");
 const authName = ref("");
@@ -54,6 +54,18 @@ const authError = ref("");
 const authSuccess = ref("");
 const authBusy = ref(false);
 const showPassword = ref(false);
+const bindValue = ref("");
+const bindPassword = ref("");
+const bindError = ref("");
+const bindSuccess = ref("");
+const bindBusy = ref(false);
+const missingContact = computed<ContactType | null>(() =>
+  !currentAccount.value?.phone
+    ? "phone"
+    : !currentAccount.value?.email
+      ? "email"
+      : null,
+);
 const page = ref<Page>("chat");
 const activeId = ref("product");
 const search = ref("");
@@ -224,12 +236,6 @@ async function submitAuth() {
   authBusy.value = true;
   try {
     if (authMode.value === "register") {
-      if (!validContact(contactType.value, authIdentifier.value))
-        throw new Error(
-          contactType.value === "phone"
-            ? "请输入正确的中国大陆手机号"
-            : "请输入正确的邮箱地址",
-        );
       if (!validPassword(authPassword.value))
         throw new Error("密码需为 8–72 位，并包含字母和数字");
       if (authPassword.value !== authConfirm.value)
@@ -238,8 +244,8 @@ async function submitAuth() {
       const account = await registerAccount({
         name: authName.value,
         handle: authHandle.value,
-        contactType: contactType.value,
-        contact: authIdentifier.value,
+        phone: authPhone.value,
+        email: authEmail.value,
         password: authPassword.value,
       });
       if (!hadAccounts) {
@@ -248,12 +254,10 @@ async function submitAuth() {
           if (legacy) localStorage.setItem(accountStateKey(account.id), legacy);
         } catch {}
       }
-      authIdentifier.value = normalizeContact(
-        contactType.value,
-        authIdentifier.value,
-      );
+      contactType.value = account.phone ? "phone" : "email";
+      authIdentifier.value = account.phone || account.email || "";
       switchAuthMode("login");
-      authSuccess.value = "注册成功！请用刚才的手机号或邮箱及密码登录。";
+      authSuccess.value = "注册成功！请用手机号或邮箱及密码登录。";
       return;
     }
     if (
@@ -289,7 +293,37 @@ function signOut() {
   sessionStorage.removeItem(sessionKey);
   currentAccount.value = null;
   authPassword.value = "";
+  bindPassword.value = "";
+  bindValue.value = "";
+  bindError.value = "";
+  bindSuccess.value = "";
   switchAuthMode("login");
+}
+async function bindContact() {
+  if (!currentAccount.value || !missingContact.value || bindBusy.value) return;
+  bindError.value = "";
+  bindSuccess.value = "";
+  bindBusy.value = true;
+  try {
+    const type = missingContact.value;
+    const updated = await bindAccountContact(
+      currentAccount.value.id,
+      type,
+      bindValue.value,
+      bindPassword.value,
+    );
+    currentAccount.value = updated;
+    bindValue.value = "";
+    bindPassword.value = "";
+    bindSuccess.value =
+      type === "phone"
+        ? "手机号已关联到此演示账号，可用于登录"
+        : "邮箱已关联到此演示账号，可用于登录";
+  } catch (error) {
+    bindError.value = error instanceof Error ? error.message : "绑定失败";
+  } finally {
+    bindBusy.value = false;
+  }
 }
 function send() {
   const text = composer.value.trim();
@@ -563,7 +597,12 @@ onBeforeUnmount(() => {
               : "先注册账号，再登录你的工作空间。"
           }}
         </p>
-        <div class="auth-tabs" role="group" aria-label="登录方式">
+        <div
+          v-if="authMode === 'login'"
+          class="auth-tabs"
+          role="group"
+          aria-label="登录方式"
+        >
           <button
             type="button"
             :class="{ active: contactType === 'phone' }"
@@ -611,11 +650,35 @@ onBeforeUnmount(() => {
               required
             />
           </div>
+          <p class="auth-contact-hint">
+            手机号和邮箱至少填一项；都填将关联同一个账号。
+          </p>
+          <label for="auth-phone">手机号 <span>可选</span></label>
+          <input
+            id="auth-phone"
+            v-model="authPhone"
+            type="tel"
+            inputmode="tel"
+            autocomplete="tel"
+            maxlength="20"
+            placeholder="请输入 11 位手机号"
+          />
+          <label for="auth-email">邮箱地址 <span>可选</span></label>
+          <input
+            id="auth-email"
+            v-model="authEmail"
+            type="email"
+            inputmode="email"
+            autocomplete="email"
+            maxlength="254"
+            placeholder="name@example.com"
+          />
         </template>
-        <label for="auth-identifier">{{
+        <label v-if="authMode === 'login'" for="auth-identifier">{{
           contactType === "phone" ? "手机号" : "邮箱地址"
         }}</label>
         <input
+          v-if="authMode === 'login'"
           id="auth-identifier"
           v-model="authIdentifier"
           :type="contactType === 'phone' ? 'tel' : 'email'"
@@ -683,7 +746,7 @@ onBeforeUnmount(() => {
           }}
         </button>
         <p class="auth-disclaimer">
-          这是本机演示账号：不会发送短信或邮件，也没有真实身份验证。请使用测试手机号、邮箱和密码，正式认证需接入后端。
+          这是本机演示账号：绑定不发送验证码，也没有真实身份验证。请使用测试联系方式和密码，正式认证需接入后端。
         </p>
       </form>
     </div>
@@ -1364,6 +1427,62 @@ onBeforeUnmount(() => {
             </div>
             <button class="outline-button" @click="signOut">退出登录</button>
           </div>
+          <div class="account-contacts">
+            <div>
+              <span>手机号</span
+              ><strong>{{ currentAccount?.phone || "未绑定" }}</strong>
+            </div>
+            <div>
+              <span>邮箱</span
+              ><strong>{{ currentAccount?.email || "未绑定" }}</strong>
+            </div>
+          </div>
+          <form
+            v-if="missingContact"
+            class="bind-form"
+            @submit.prevent="bindContact"
+          >
+            <strong
+              >补绑{{ missingContact === "phone" ? "手机号" : "邮箱" }}</strong
+            >
+            <p>确认当前密码后可在本机将另一种联系方式关联到此账号。</p>
+            <label for="bind-value">{{
+              missingContact === "phone" ? "手机号" : "邮箱地址"
+            }}</label>
+            <input
+              id="bind-value"
+              v-model="bindValue"
+              :type="missingContact === 'phone' ? 'tel' : 'email'"
+              :autocomplete="missingContact === 'phone' ? 'tel' : 'email'"
+              :placeholder="
+                missingContact === 'phone'
+                  ? '请输入 11 位手机号'
+                  : 'name@example.com'
+              "
+              required
+            />
+            <label for="bind-password">当前密码</label>
+            <input
+              id="bind-password"
+              v-model="bindPassword"
+              type="password"
+              autocomplete="current-password"
+              placeholder="输入当前账号密码"
+              required
+            />
+            <p v-if="bindError" class="error-text" role="alert">
+              {{ bindError }}
+            </p>
+            <button class="primary-button" type="submit" :disabled="bindBusy">
+              {{ bindBusy ? "处理中…" : "关联到当前账号" }}
+            </button>
+            <small
+              >演示绑定不验证号码或邮箱所有权；正式产品需要短信或邮件验证码。</small
+            >
+          </form>
+          <p v-if="bindSuccess" class="success-text" role="status">
+            {{ bindSuccess }}
+          </p>
         </div>
         <div class="content-card">
           <div class="card-heading">
