@@ -1,0 +1,488 @@
+/* A warmer, quieter visual layer over the original layout and responsive rules. */
+:root {
+  color: #252943;
+  background: #f7f7fb;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline-color: #8588ea;
+}
+
+.app-shell {
+  background: #f7f7fb;
+}
+.rail {
+  background: #222747;
+  border-right: 1px solid #353b62;
+}
+.rail-logo,
+.brand-mark {
+  background: linear-gradient(145deg, #888df5, #6268d7);
+  box-shadow: 0 9px 24px #11163835;
+}
+.rail-link,
+.rail-profile {
+  color: #aeb5d3;
+}
+.rail-link:hover,
+.rail-link.active {
+  background: #ffffff1d;
+  color: #fff;
+}
+.rail-link.active:before {
+  background: #b3b3ff;
+}
+.rail-profile .avatar {
+  box-shadow: 0 0 0 2px #ffffff40;
+}
+
+.conversation-panel,
+.assistant-panel {
+  background: #fff;
+  border-color: #e9eaf2;
+}
+.panel-top h1,
+.page-header h1 {
+  color: #252943;
+  letter-spacing: -1.1px;
+}
+.overline {
+  color: #777db0;
+  letter-spacing: 1.55px;
+}
+.count-pill,
+.tag,
+.beta {
+  background: #efefff;
+  color: #5b60b8;
+}
+.icon-button:hover,
+.tool-button:hover,
+.tool-button.recording {
+  background: #f0efff;
+  color: #5258b6;
+}
+.icon-button.outlined,
+.outline-button {
+  border-color: #e1e2f0;
+  color: #5259ad;
+}
+.search-box {
+  background: #f7f7fb;
+  border-color: #ececf4;
+  border-radius: 13px;
+}
+.search-box:focus-within,
+.composer:focus-within {
+  border-color: #9396e8;
+  box-shadow: 0 0 0 3px #6c71e51a;
+}
+.conversation-item {
+  border-radius: 14px;
+  transition:
+    background 0.18s ease,
+    transform 0.18s ease;
+}
+.conversation-item:hover {
+  background: #f6f5ff;
+  transform: translateX(2px);
+}
+.conversation-item.selected {
+  background: #ededff;
+  color: #252943;
+}
+.conversation-line.preview,
+.chat-heading p,
+.page-subtitle {
+  color: #798199;
+}
+.unread-badge,
+.primary-button,
+.send-button {
+  background: #5c62ca;
+}
+.primary-button,
+.send-button {
+  box-shadow: 0 6px 16px #5157bd29;
+}
+.primary-button:hover,
+.send-button:hover {
+  background: #484eb4;
+}
+.sidebar-help {
+  background: #f3f2ff;
+  border: 1px solid #e9e8fa;
+}
+.help-icon,
+.assistant-mark,
+.modal-icon {
+  background: #e8e7ff;
+  color: #535ab5;
+}
+.sidebar-bottom,
+.chat-header,
+.assistant-header,
+.composer-zone {
+  border-color: #ebeaf3;
+}
+
+.chat-main {
+  background: #f7f8fc;
+}
+.chat-header,
+.composer-zone {
+  background: #fff;
+}
+.chat-notice {
+  background: #f0efff;
+  color: #575d9c;
+}
+.day-divider span,
+.system-message {
+  background: #eaeaf5;
+  color: #6e7691;
+}
+.bubble {
+  border-color: #e9eaf2;
+  border-radius: 6px 17px 17px 17px;
+  box-shadow: 0 6px 18px #3236570b;
+}
+.mine .bubble {
+  background: #e6e7ff;
+  border-color: #dedffc;
+  border-radius: 17px 6px 17px 17px;
+  color: #303668;
+}
+.translation {
+  background: #f2f3fb;
+  color: #64708c;
+}
+.composer {
+  border-color: #e7e8f1;
+  border-radius: 17px;
+  box-shadow: 0 5px 22px #2a30500a;
+}
+.composer textarea {
+  color: #252943;
+}
+.voice-label,
+.voice-interim,
+.load-more,
+.source-link,
+.text-button {
+  color: #555ec0;
+}
+.load-more {
+  background: #ececff;
+}
+.assist-hero {
+  background: linear-gradient(145deg, #f1efff, #ecf1ff);
+  border-color: #e5e4fa;
+  border-radius: 19px;
+}
+.assist-hero:after {
+  color: #d9d7fb;
+}
+.assist-hero-icon {
+  color: #555dc1;
+}
+.assist-hero strong,
+.assist-label,
+.summary-card small,
+.highlight-section button {
+  color: #535ab5;
+}
+.assist-label strong {
+  color: #343955;
+}
+.segmented {
+  background: #f1f1fb;
+}
+.summary-card,
+.soft-button {
+  border-color: #e7e7f3;
+  background: #f8f8fe;
+}
+.soft-button {
+  color: #525ab5;
+}
+.soft-button:hover,
+.outline-button:hover {
+  background: #eeeeff;
+}
+.source-link {
+  border-color: #e9e9f2;
+}
+.segmented button.active {
+  color: #5157b9;
+}
+
+.page-shell {
+  background: #f7f7fb;
+}
+.stat-card,
+.content-card {
+  border-color: #e9eaf2;
+  border-radius: 19px;
+  box-shadow: 0 10px 28px #3337580a;
+}
+.stat-card strong {
+  color: #555bc4;
+}
+.person-row,
+.request-row,
+.todo-row,
+.notice-row {
+  border-color: #edecf4;
+}
+.notice-icon {
+  background: #efefff;
+  color: #555cb9;
+}
+.add-task,
+.account-contacts > div {
+  background: #f8f8fd;
+  border-color: #e8e9f2;
+}
+.add-task button,
+.source-small {
+  color: #555dc1;
+}
+.todo-label input:checked + .custom-check {
+  background: #6066cc;
+  border-color: #6066cc;
+}
+.todo-label input:focus-visible + .custom-check {
+  outline-color: #8588ea;
+}
+.setting-row,
+.profile-setting,
+.bind-form {
+  border-color: #ececf4;
+}
+.setting-input,
+.setting-row select,
+.bind-form input {
+  border-color: #e3e5ef;
+  color: #343955;
+}
+.setting-input:focus-visible,
+.setting-row select:focus-visible {
+  outline-color: #8588ea;
+}
+.switch input:checked + span {
+  background: #6066cc;
+}
+.modal-backdrop,
+.drawer-backdrop {
+  background: #1b204b78;
+  backdrop-filter: blur(3px);
+}
+.modal-card,
+.info-drawer {
+  background: #fff;
+  box-shadow: 0 26px 80px #1a1f4833;
+}
+.modal-card {
+  border-radius: 22px;
+}
+.toast {
+  background: #292f55;
+}
+
+.auth-shell {
+  grid-template-columns: minmax(0, 49%) minmax(0, 51%);
+  background: #f7f7fb;
+}
+.auth-visual {
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 78% 34%, #8488db70 0, transparent 34%),
+    linear-gradient(155deg, #24284d 2%, #3d4689 60%, #646ac8 120%);
+}
+.auth-visual:before {
+  width: 560px;
+  height: 560px;
+  top: 13%;
+  right: -28%;
+  border-color: #ffffff24;
+  box-shadow:
+    0 0 0 88px #ffffff09,
+    0 0 0 176px #ffffff07;
+}
+.auth-visual:after {
+  content: "";
+  position: absolute;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  left: -75px;
+  bottom: 15%;
+  background: #e5a9b028;
+  filter: blur(5px);
+  z-index: -1;
+}
+.auth-visual .brand-mark {
+  background: #ffffff22;
+  border-color: #ffffff5c;
+  box-shadow: none;
+}
+.auth-art {
+  gap: 19px;
+  transform: rotate(-4deg);
+}
+.art-card {
+  border: 1px solid #ffffffb8;
+  border-radius: 19px;
+  color: #353b66;
+  box-shadow: 0 25px 65px #12183d4d;
+  padding: 16px 19px;
+}
+.art-card.second {
+  margin-left: 76px;
+  background: #f5f4ff;
+}
+.art-glow {
+  color: #ffffff2b;
+}
+.auth-copy .overline {
+  color: #cbcfff;
+}
+.auth-copy h1 {
+  letter-spacing: -2.5px;
+}
+.auth-copy > p:last-child,
+.auth-visual > small {
+  color: #e4e6ff;
+}
+.auth-form-wrap {
+  background:
+    radial-gradient(circle at 96% 6%, #e9e8ff 0, transparent 29%), #f7f7fb;
+  padding: 30px clamp(24px, 5vw, 76px);
+}
+.auth-card {
+  width: min(452px, 100%);
+  background: #fff;
+  border: 1px solid #e9e9f3;
+  border-radius: 25px;
+  padding: clamp(24px, 3vw, 36px);
+  box-shadow: 0 24px 70px #252a5414;
+}
+.eyebrow-chip {
+  background: #efefff;
+  color: #545bb7;
+  border-radius: 20px;
+  font-weight: 700;
+}
+.auth-card h2 {
+  color: #252943;
+  margin-top: 21px;
+  letter-spacing: -1.1px;
+}
+.auth-card > p {
+  color: #747b93;
+  font-size: 12px;
+}
+.auth-card label,
+.field-label {
+  color: #4b526d;
+  font-size: 12px;
+}
+.auth-card .auth-contact-hint {
+  color: #565f9c;
+}
+.auth-card > input,
+.auth-card .input-prefix,
+.auth-card .password-field,
+.verification-field input {
+  border-color: #e3e5ef;
+  border-radius: 11px;
+  background: #fdfdff;
+  color: #252943;
+  font-size: 13px;
+}
+.auth-card input:focus,
+.auth-card .input-prefix:focus-within,
+.auth-card .password-field:focus-within {
+  border-color: #777ddd;
+  box-shadow: 0 0 0 3px #666dda1a;
+}
+.auth-tabs,
+.login-method {
+  border-radius: 12px;
+}
+.auth-tabs {
+  background: #f2f2fb;
+}
+.auth-tabs button.active {
+  color: #4f56b6;
+  box-shadow: 0 2px 8px #30386c15;
+}
+.login-method button.active {
+  color: #4f56b6;
+  border-bottom-color: #6168cc;
+}
+.verification-field button {
+  background: #efefff;
+  color: #4b54ad;
+  border-color: #e1e1fa;
+}
+.verification-field button:hover:not(:disabled) {
+  background: #e5e4ff;
+}
+.auth-card .demo-code,
+.bind-form .demo-code {
+  background: #eeefff;
+  color: #414a99;
+}
+.auth-back,
+.auth-switch {
+  color: #4d55b9;
+}
+.auth-card .auth-disclaimer {
+  color: #80869b;
+  border-color: #eeeef5;
+  font-size: 11px;
+}
+
+@media (max-width: 830px) {
+  .auth-shell {
+    grid-template-columns: 44% 56%;
+  }
+  .auth-card {
+    padding: 24px;
+  }
+}
+@media (max-width: 650px) {
+  .auth-shell {
+    display: block;
+  }
+  .auth-visual {
+    min-height: 255px;
+  }
+  .auth-form-wrap {
+    position: relative;
+    padding: 0 16px 32px;
+    margin-top: -24px;
+    background: transparent;
+  }
+  .auth-card {
+    width: min(452px, 100%);
+    margin: 0 auto;
+    border-radius: 21px;
+    padding: 25px 20px;
+  }
+  .auth-copy {
+    margin-top: 30px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conversation-item,
+  .assistant-panel,
+  .chat-main {
+    transition: none;
+  }
+}
