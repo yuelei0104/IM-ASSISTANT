@@ -20,6 +20,15 @@ class ContactServiceTest {
     private final ContactService service = new ContactService(contacts, users, sessions);
 
     @Test
+    void chatAccessUsesTheSessionAndCurrentFriendship() {
+        when(sessions.requireUserId("Bearer token")).thenReturn(25L);
+        when(contacts.friendshipCount(10L, 25L)).thenReturn(1L);
+        org.junit.jupiter.api.Assertions.assertEquals(25L, service.requireFriend("Bearer token", 10L));
+        verify(contacts).friendshipCount(10L, 25L);
+        assertThrows(AuthException.class, () -> service.requireFriend("Bearer token", 99L));
+    }
+
+    @Test
     void acceptingAnIncomingRequestCreatesOneCanonicalFriendship() {
         when(sessions.requireUserId("Bearer token")).thenReturn(10L);
         when(contacts.requestForUpdate(7L))

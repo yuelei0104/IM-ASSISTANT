@@ -34,6 +34,14 @@ public class ContactController {
         return contacts.friends(authorization);
     }
 
+    public record ChatAccess(long userId) { }
+
+    @GetMapping("/{friendId}/access")
+    public ChatAccess access(@RequestHeader(value = "Authorization", required = false) String authorization,
+                             @PathVariable long friendId) {
+        return new ChatAccess(contacts.requireFriend(authorization, friendId));
+    }
+
     @GetMapping("/requests")
     public List<FriendRequestView> requests(@RequestHeader(value = "Authorization", required = false) String authorization) {
         return contacts.requests(authorization);

@@ -47,6 +47,14 @@ public class ContactService {
         return contacts.friends(sessions.requireUserId(authorization));
     }
 
+    public long requireFriend(String authorization, long friendId) {
+        long me = sessions.requireUserId(authorization);
+        if (friendId <= 0 || friendId == me ||
+                contacts.friendshipCount(Math.min(me, friendId), Math.max(me, friendId)) == 0)
+            throw new AuthException(HttpStatus.FORBIDDEN, "只有好友之间可以发送消息");
+        return me;
+    }
+
     public List<FriendRequestView> requests(String authorization) {
         return contacts.requests(sessions.requireUserId(authorization));
     }

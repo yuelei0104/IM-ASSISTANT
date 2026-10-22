@@ -89,5 +89,46 @@ The `Authorization: Bearer <token>` header is required for the following
 Only the recipient may accept or reject; only the sender may withdraw. The
 database prevents two simultaneous pending requests for the same pair, even
 when both users send at once. The Vue app uses these APIs for the contacts and
-friend requests screens. Conversations still use local demonstration data.
+friend requests screens. `GET /api/contacts/{friendId}/access` validates an
+authenticated friendship for the chat service and returns the caller's user ID.
 Stop the service with Ctrl+C in its terminal.
+
+## One-to-one messages (local development)
+
+Start MySQL and Redis, then keep `im-user-service` running on 8081. In a **new**
+PowerShell window from `D:\im-assistant\im-backend`, set the same MySQL password
+and start chat on 8082:
+
+```powershell
+$env:IM_MYSQL_PASSWORD = Read-Host "IM_MYSQL_PASSWORD from .env"
+.\mvnw.cmd -pl im-chat-service test
+.\mvnw.cmd -pl im-chat-service spring-boot:run "-Dspring-boot.run.profiles=dev"
+```
+
+Chat uses a separate `im_chat_schema_history` Flyway table and creates
+`im_direct_message` automatically. The user service must already have applied
+its V1/V2 migrations. Both services use the same local `im_assistant` database
+for this development stage; chat never reads the user service's tables directly.
+Each chat request forwards its bearer token to the user service to establish
+the caller's identity. Sending also verifies the pair is **currently** friends.
+
+- `POST /api/chats/direct/{friendId}/messages` accepts
+  `{ "clientMsgId": "UUID", "body": "你好" }`. Repeating the same UUID and body
+  returns the existing message; reusing the UUID for another body or recipient
+  returns 409. Maximum body length is 4,000 characters.
+- `GET /api/chats/direct/{friendId}/messages?limit=50&beforeId=123` returns
+  `{ "messages": [ ... ], "nextBeforeId": 123 }`, with messages in ascending ID
+  order. Omit `beforeId` for the latest page; pass `nextBeforeId` to load older
+  messages until it is null. A logged-in participant can read history after the
+  friendship ends, but cannot send more messages.
+
+Run `npm run dev` from `D:\im-assistant\im-web` after restarting Vite so its
+proxy routes `/api/chats` to 8082. Test with two registered accounts in separate
+browser profiles: accept a friend request, open the friend in 联系人 → 发消息,
+send from A, then open that friend on B. B checks for new messages every five
+seconds while viewing the conversation. Reload each page to confirm history
+comes from MySQL, and try the same message UUID twice to check idempotency.
+Previously opened friend conversations keep a per-account browser entry after
+removal, so either participant can still reopen their history on that browser.
+Existing example discussions and their assistant tools are still local demos;
+WebSocket push, receipts, and group messages follow in later steps.

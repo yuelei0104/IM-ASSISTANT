@@ -44,6 +44,7 @@ import {
   type ContactProfile,
   type ContactRequest,
 } from "./contactApi";
+import { loadDirectMessages, sendDirectMessage, type DirectMessage } from "./chatApi";
 import {
   clock,
   initialState,
@@ -51,6 +52,7 @@ import {
   uid,
   type Conversation,
   type DemoState,
+  type Message,
   type Person,
 } from "./demo";
 
@@ -66,6 +68,17 @@ function load(account: Account | null): DemoState {
     }
   } catch {}
   return initialState();
+}
+function peerCacheKey(id: number): string { return `${accountStateKey(id)}-chat-peers`; }
+function loadKnownPeers(account: Account): ContactProfile[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(peerCacheKey(account.id)) || "[]");
+    if (!Array.isArray(saved)) return [];
+    return saved.filter((p) =>
+      Number.isSafeInteger(p.id) && p.id > 0 &&
+      typeof p.nickname === "string" && typeof p.handle === "string",
+    );
+  } catch { return []; }
 }
 const currentAccount = ref<Account | null>(null);
 const data = ref<DemoState>(load(currentAccount.value));
@@ -157,6 +170,14 @@ const friendError = ref("");
 const friendBusy = ref(false);
 const foundProfile = ref<ContactProfile | null>(null);
 const contactProfiles = ref<ContactProfile[]>([]);
+const knownPeers = ref<ContactProfile[]>([]);
+const directMessages = ref<DirectMessage[]>([]);
+const nextBeforeId = ref<number | null>(null);
+const chatBusy = ref(false);
+const chatError = ref("");
+const sending = ref(false);
+let chatSeq = 0;
+let pendingSend: { peerId: number; text: string; clientMsgId: string } | null = null;
 const contactRequests = ref<ContactRequest[]>([]);
 const contactsBusy = ref(false);
 const contactsError = ref("");
@@ -189,10 +210,20 @@ watch(
   },
   { deep: true },
 );
+watch(knownPeers, (peers) => {
+  if (!currentAccount.value) return;
+  try { localStorage.setItem(peerCacheKey(currentAccount.value.id), JSON.stringify(peers)); } catch {}
+}, { deep: true });
 watch(activeId, () => {
   showSummary.value = false;
   showOlder.value = false;
   stopVoice();
+  directMessages.value = [];
+  nextBeforeId.value = null;
+  chatError.value = "";
+  chatSeq++;
+  chatBusy.value = false;
+  if (directPeer(activeId.value)) void refreshDirectChat();
   nextTick(scrollBottom);
 });
 watch(page, () => {
@@ -202,20 +233,44 @@ watch(page, () => {
   if (page.value === "contacts" || page.value === "requests")
     void refreshContacts();
 });
-const active = computed(() =>
-  data.value.conversations.find((c) => c.id === activeId.value),
+function directPeer(id: string): number | null {
+  if (!/^server-user-[1-9]\d*$/.test(id)) return null;
+  const peerId = Number(id.slice(12));
+  return Number.isSafeInteger(peerId) ? peerId : null;
+}
+const realConversations = computed<Conversation[]>(() =>
+  knownPeers.value.map((p) => ({
+    id: `server-user-${p.id}`,
+    name: p.nickname,
+    kind: "direct",
+    memberIds: [selfId, `user-${p.id}`],
+    unread: 0,
+    color: "violet",
+    initials: p.nickname[0] || "友",
+  })),
 );
-const messages = computed(() =>
-  data.value.messages.filter((m) => m.conversationId === activeId.value),
+const allConversations = computed(() => [...realConversations.value, ...data.value.conversations]);
+const active = computed(() => allConversations.value.find((c) => c.id === activeId.value));
+const messages = computed<Message[]>(() =>
+  directPeer(activeId.value)
+    ? directMessages.value.map((m) => ({
+        id: `server-message-${m.id}`,
+        conversationId: activeId.value,
+        senderId: m.senderId === currentAccount.value?.id ? selfId : `user-${m.senderId}`,
+        text: m.body,
+        time: new Date(m.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+        kind: "text" as const,
+      }))
+    : data.value.messages.filter((m) => m.conversationId === activeId.value),
 );
 const visibleMessages = computed(() =>
-  showOlder.value ? messages.value : messages.value.slice(-12),
+  directPeer(activeId.value) || showOlder.value ? messages.value : messages.value.slice(-12),
 );
 const conversations = computed(() =>
-  data.value.conversations.filter(
+  allConversations.value.filter(
     (c) =>
       c.name.toLowerCase().includes(search.value.toLowerCase()) ||
-      data.value.messages.some(
+      (directPeer(c.id) ? (c.id === activeId.value ? messages.value : []) : data.value.messages).some(
         (m) =>
           m.conversationId === c.id &&
           m.text.toLowerCase().includes(search.value.toLowerCase()),
@@ -246,7 +301,9 @@ const openTasks = computed(
 const canWrite = computed(
   () =>
     !!active.value &&
-    (active.value.kind === "group"
+    (directPeer(activeId.value)
+      ? contactProfiles.value.some((p) => p.id === directPeer(activeId.value))
+      : active.value.kind === "group"
       ? active.value.memberIds.includes(selfId)
       : active.value.memberIds.every(
           (id) => id === selfId || data.value.friendIds.includes(id),
@@ -278,6 +335,10 @@ function person(id: string): Person {
   );
 }
 function last(c: Conversation) {
+  if (directPeer(c.id)) {
+    const lastMessage = c.id === activeId.value ? messages.value.at(-1) : undefined;
+    return lastMessage;
+  }
   return data.value.messages.filter((m) => m.conversationId === c.id).at(-1);
 }
 function notify(s: string) {
@@ -290,7 +351,8 @@ function scrollBottom() {
     messageScroll.value.scrollTop = messageScroll.value.scrollHeight;
 }
 function openChat(id: string, source?: string) {
-  const previous = data.value.conversations.find((x) => x.id === id);
+  const wasActive = activeId.value === id;
+  const previous = allConversations.value.find((x) => x.id === id);
   const unreadMessages = data.value.messages.filter(
     (m) => m.conversationId === id,
   );
@@ -301,7 +363,7 @@ function openChat(id: string, source?: string) {
   activeId.value = id;
   page.value = "chat";
   assistantOpen.value = false;
-  const c = data.value.conversations.find((x) => x.id === id);
+  const c = allConversations.value.find((x) => x.id === id);
   if (c) c.unread = 0;
   if (source) {
     showOlder.value = true;
@@ -313,7 +375,54 @@ function openChat(id: string, source?: string) {
     );
     setTimeout(() => (focusId.value = ""), 3000);
   } else nextTick(scrollBottom);
+  if (directPeer(id) && wasActive && !chatBusy.value) void refreshDirectChat();
 }
+function mergeDirect(incoming: DirectMessage[]) {
+  const byId = new Map(directMessages.value.map((m) => [m.id, m]));
+  for (const m of incoming) byId.set(m.id, m);
+  directMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
+}
+async function refreshDirectChat() {
+  const peerId = directPeer(activeId.value);
+  const accountId = currentAccount.value?.id;
+  if (!peerId || !accountId || chatBusy.value) return;
+  const sequence = ++chatSeq;
+  chatBusy.value = true;
+  try {
+    const result = await loadDirectMessages(peerId);
+    if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return;
+    if (!directMessages.value.length) nextBeforeId.value = result.nextBeforeId;
+    mergeDirect(result.messages);
+    chatError.value = "";
+    nextTick(scrollBottom);
+  } catch (error) {
+    if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "消息加载失败";
+  } finally {
+    if (sequence === chatSeq) chatBusy.value = false;
+  }
+}
+async function loadOlderDirect() {
+  const peerId = directPeer(activeId.value);
+  const beforeId = nextBeforeId.value;
+  const accountId = currentAccount.value?.id;
+  if (!peerId || !beforeId || !accountId || chatBusy.value) return;
+  const sequence = ++chatSeq;
+  chatBusy.value = true;
+  try {
+    const result = await loadDirectMessages(peerId, beforeId);
+    if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return;
+    mergeDirect(result.messages);
+    nextBeforeId.value = result.nextBeforeId;
+    chatError.value = "";
+  } catch (error) {
+    if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "加载历史失败";
+  } finally {
+    if (sequence === chatSeq) chatBusy.value = false;
+  }
+}
+const chatPoll = setInterval(() => {
+  if (page.value === "chat" && directPeer(activeId.value) && !chatBusy.value) void refreshDirectChat();
+}, 5000);
 function switchAuthMode(next: "login" | "register" | "reset") {
   authMode.value = next;
   registerStep.value = "details";
@@ -385,6 +494,10 @@ async function requestCode(
   }
 }
 function applyAccount(account: Account) {
+  chatSeq++;
+  knownPeers.value = loadKnownPeers(account);
+  directMessages.value = [];
+  activeId.value = "product";
   data.value = load(account);
   data.value.displayName = account.name;
   data.value.handle = account.handle;
@@ -410,6 +523,9 @@ async function refreshContacts() {
     if (sequence !== contactsSeq || currentAccount.value?.id !== accountId)
       return;
     contactProfiles.value = profiles;
+    const merged = new Map(knownPeers.value.map((p) => [p.id, p]));
+    for (const profile of profiles) merged.set(profile.id, profile);
+    knownPeers.value = [...merged.values()];
     contactRequests.value = requests;
   } catch (error) {
     if (sequence !== contactsSeq || currentAccount.value?.id !== accountId)
@@ -541,7 +657,10 @@ async function signOut() {
   }
   stopVoice();
   contactsSeq++;
+  chatSeq++;
   contactProfiles.value = [];
+  knownPeers.value = [];
+  directMessages.value = [];
   contactRequests.value = [];
   currentAccount.value = null;
   page.value = "chat";
@@ -578,9 +697,32 @@ async function bindContact() {
     bindBusy.value = false;
   }
 }
-function send() {
+async function send() {
   const text = composer.value.trim();
-  if (!text || !active.value || !canWrite.value) return;
+  if (!text || !active.value || !canWrite.value || sending.value) return;
+  const peerId = directPeer(activeId.value);
+  if (peerId) {
+    const accountId = currentAccount.value?.id;
+    if (!accountId) return;
+    const clientMsgId = pendingSend?.peerId === peerId && pendingSend.text === text
+      ? pendingSend.clientMsgId : crypto.randomUUID();
+    pendingSend = { peerId, text, clientMsgId };
+    sending.value = true;
+    try {
+      const saved = await sendDirectMessage(peerId, clientMsgId, text);
+      if (currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return;
+      mergeDirect([saved]);
+      composer.value = "";
+      pendingSend = null;
+      chatError.value = "";
+      nextTick(scrollBottom);
+    } catch (error) {
+      chatError.value = error instanceof Error ? error.message : "发送失败，请重试";
+    } finally {
+      sending.value = false;
+    }
+    return;
+  }
   data.value.messages.push({
     id: uid("m"),
     conversationId: activeId.value,
@@ -675,6 +817,9 @@ async function removeFriend(p: Person) {
   } catch (error) {
     notify(error instanceof Error ? error.message : "移除失败");
   }
+}
+function openFriendChat(p: Person) {
+  openChat(`server-${p.id}`);
 }
 function openModal(m: Modal) {
   modal.value = m;
@@ -826,6 +971,7 @@ function visibility() {
 document.addEventListener("visibilitychange", visibility);
 onBeforeUnmount(() => {
   stopVoice();
+  clearInterval(chatPoll);
   clearTimeout(toastTimer);
   clearInterval(codeInterval);
   document.removeEventListener("visibilitychange", visibility);
@@ -1370,7 +1516,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <span class="demo-chip"
-            ><span class="status-dot" />账号已接入 · 聊天本地演示</span
+            ><span class="status-dot" />好友私聊已接入 · 讨论室演示</span
           >
         </div>
       </aside>
@@ -1425,17 +1571,23 @@ onBeforeUnmount(() => {
         </header>
         <div class="chat-notice">
           <AppIcon name="shield" :size="15" />
-          消息仅在此浏览器演示；真实同步、翻译与 AI 总结待接入后端。
+          {{ directPeer(activeId) ? "好友消息已保存；每 5 秒检查新消息。实时推送待接入。" : "此讨论室为本地演示；群聊、翻译与 AI 总结待接入后端。" }}
         </div>
         <div ref="messageScroll" class="message-scroll">
           <div class="messages-inner">
+            <p v-if="chatError && directPeer(activeId)" class="error-text" role="alert">{{ chatError }}</p>
+            <button v-if="directPeer(activeId) && nextBeforeId" class="load-more" :disabled="chatBusy" @click="loadOlderDirect">
+              {{ chatBusy ? "加载中…" : "查看更早消息" }}
+            </button>
             <button
-              v-if="!showOlder && messages.length > 12"
+              v-if="!directPeer(activeId) && !showOlder && messages.length > 12"
               class="load-more"
               @click="showOlder = true"
             >
               查看更早消息
             </button>
+            <p v-if="directPeer(activeId) && chatBusy && !messages.length" role="status">正在加载消息…</p>
+            <p v-if="directPeer(activeId) && !chatBusy && !messages.length" class="empty-list">还没有消息，发一条开始聊天吧</p>
             <div class="day-divider"><span>今天 · 讨论继续</span></div>
             <template v-for="m in visibleMessages" :key="m.id"
               ><div v-if="unreadMarker === m.id" class="unread-divider">
@@ -1530,7 +1682,7 @@ onBeforeUnmount(() => {
               </div>
               <button
                 class="send-button"
-                :disabled="!composer.trim()"
+                :disabled="!composer.trim() || sending"
                 @click="send"
               >
                 发送 <AppIcon name="arrowUp" :size="16" />
@@ -1727,8 +1879,8 @@ onBeforeUnmount(() => {
               <strong>{{ p.name }}</strong
               ><span>@{{ p.handle }} · {{ p.note }}</span>
             </div>
-            <button class="outline-button" disabled title="消息服务尚未接入">
-              <AppIcon name="message" :size="15" /> 消息接入中</button
+            <button class="outline-button" @click="openFriendChat(p)">
+              <AppIcon name="message" :size="15" /> 发消息</button
             ><button
               class="icon-button subdued"
               :aria-label="`移除好友 ${p.name}`"
