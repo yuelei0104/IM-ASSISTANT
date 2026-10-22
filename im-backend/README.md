@@ -181,8 +181,10 @@ The same forward recovery endpoint is available at
 it enforces membership and the member's join cursor. Flyway V6 creates a
 per-pair lock table for direct sends, so concurrent writes to one conversation
 commit in ID order. Group sends already serialize on the group row. The
-forward cursor is kept in the active browser tab; reopening a conversation
-loads its latest history page.
+forward cursor is saved per account and conversation in browser storage.
+Reopening a conversation loads its latest history page, then recovers forward
+from the saved cursor. A new browser starts at the latest page and can page
+back through older messages.
 Chat Flyway V5 creates `im_group_mention_notice`. A group message can include
 `mentionedUserIds` (up to 10 current members other than the sender). Sending
 the same `clientMsgId` again with the same body and mentions returns the

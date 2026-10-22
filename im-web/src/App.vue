@@ -50,6 +50,7 @@ import {
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, type MentionNotice } from "./noticeApi";
 import { syncForward } from "./incrementalSync";
+import { resumeCursor, savedCursor, saveCursor } from "./syncCursor";
 import {
   initialState,
   selfId,
@@ -514,17 +515,19 @@ async function refreshDirectChat() {
       if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return;
       nextBeforeId.value = result.nextBeforeId;
       mergeDirect(result.messages);
-      directSyncCursor.value = result.messages.at(-1)?.id ?? 0;
-    } else {
-      const resumed = await syncForward(directSyncCursor.value,
-        (cursor) => syncDirectMessages(peerId, cursor), (messages, cursor) => {
-          if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return false;
-          mergeDirect(messages);
-          directSyncCursor.value = cursor;
-          return true;
-        });
-      if (resumed === null) return;
+      const newest = result.messages.at(-1)?.id ?? 0;
+      directSyncCursor.value = resumeCursor(savedCursor(accountId, "direct", peerId), newest);
+      saveCursor(accountId, "direct", peerId, directSyncCursor.value);
     }
+    const resumed = await syncForward(directSyncCursor.value,
+      (cursor) => syncDirectMessages(peerId, cursor), (messages, cursor) => {
+        if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return false;
+        mergeDirect(messages);
+        directSyncCursor.value = cursor;
+        saveCursor(accountId, "direct", peerId, cursor);
+        return true;
+      });
+    if (resumed === null) return;
     chatError.value = "";
     await nextTick();
     scrollBottom();
@@ -634,17 +637,19 @@ async function refreshGroupChat() {
       if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return;
       groupNextBeforeId.value = result.nextBeforeId;
       mergeGroup(result.messages);
-      groupSyncCursor.value = result.messages.at(-1)?.id ?? 0;
-    } else {
-      const resumed = await syncForward(groupSyncCursor.value,
-        (cursor) => syncGroupMessages(groupId, cursor), (messages, cursor) => {
-          if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return false;
-          mergeGroup(messages);
-          groupSyncCursor.value = cursor;
-          return true;
-        });
-      if (resumed === null) return;
+      const newest = result.messages.at(-1)?.id ?? 0;
+      groupSyncCursor.value = resumeCursor(savedCursor(accountId, "group", groupId), newest);
+      saveCursor(accountId, "group", groupId, groupSyncCursor.value);
     }
+    const resumed = await syncForward(groupSyncCursor.value,
+      (cursor) => syncGroupMessages(groupId, cursor), (messages, cursor) => {
+        if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return false;
+        mergeGroup(messages);
+        groupSyncCursor.value = cursor;
+        saveCursor(accountId, "group", groupId, cursor);
+        return true;
+      });
+    if (resumed === null) return;
     chatError.value = "";
     await nextTick();
     if (focusId.value)
