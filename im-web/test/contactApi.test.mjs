@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   deleteFriend,
   findUser,
+  findUserByPhone,
   inviteFriend,
   listFriends,
   listRequests,
@@ -21,7 +22,10 @@ test("friend search and request lifecycle require a bearer token", async () => {
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options });
     assert.equal(options.headers.Authorization, "Bearer token-for-alice");
-    if (url.endsWith("/users/bob_22"))
+    if (
+      url.endsWith("/users/bob_22") ||
+      url.endsWith("/users/phone/13800138000")
+    )
       return Response.json({ id: 22, nickname: "Bob", handle: "bob_22" });
     if (url.endsWith("/requests") && options.method === "GET")
       return Response.json([{ id: 3, fromId: 1, toId: 22, state: "PENDING" }]);
@@ -33,7 +37,7 @@ test("friend search and request lifecycle require a bearer token", async () => {
   };
 
   assert.equal((await findUser("bob_22")).id, 22);
-  await inviteFriend("bob_22", "一起讨论项目");
+  await inviteFriend({ handle: "bob_22" }, "一起讨论项目");
   assert.deepEqual(JSON.parse(calls[1].options.body), {
     handle: "bob_22",
     note: "一起讨论项目",
@@ -44,6 +48,12 @@ test("friend search and request lifecycle require a bearer token", async () => {
   assert.equal((await listFriends())[0].handle, "bob_22");
   await deleteFriend(22);
   assert.equal(calls[5].options.method, "DELETE");
+  assert.equal((await findUserByPhone("13800138000")).handle, "bob_22");
+  await inviteFriend({ phone: "13800138000" }, "手机号添加");
+  assert.deepEqual(JSON.parse(calls[7].options.body), {
+    phone: "13800138000",
+    note: "手机号添加",
+  });
 });
 
 test("contact requests fail before sending when the session is missing", async () => {

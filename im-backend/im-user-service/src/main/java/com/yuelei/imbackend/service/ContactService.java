@@ -9,6 +9,7 @@ import com.yuelei.imbackend.model.FriendRequestRow;
 import com.yuelei.imbackend.model.FriendRequestView;
 import com.yuelei.imbackend.model.UserAccount;
 import com.yuelei.imbackend.util.Contacts;
+import com.yuelei.imbackend.util.Contacts.Type;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -35,6 +36,13 @@ public class ContactService {
         return profile(account);
     }
 
+    public ContactProfile findByPhone(String authorization, String rawPhone) {
+        sessions.requireUserId(authorization);
+        UserAccount account = users.byPhone(Contacts.normalize(Type.PHONE, rawPhone));
+        if (account == null) throw new AuthException(HttpStatus.NOT_FOUND, "未找到该手机号绑定的账号");
+        return profile(account);
+    }
+
     public List<ContactProfile> friends(String authorization) {
         return contacts.friends(sessions.requireUserId(authorization));
     }
@@ -46,7 +54,13 @@ public class ContactService {
     @Transactional
     public void invite(String authorization, Invite input) {
         long me = sessions.requireUserId(authorization);
-        UserAccount target = users.byHandle(Contacts.handle(input.handle()));
+        boolean hasHandle = input.handle() != null && !input.handle().isBlank();
+        boolean hasPhone = input.phone() != null && !input.phone().isBlank();
+        if (hasHandle == hasPhone)
+            throw new AuthException(HttpStatus.BAD_REQUEST, "请填写手机号或唯一账号，两者只需一项");
+        UserAccount target = hasPhone
+                ? users.byPhone(Contacts.normalize(Type.PHONE, input.phone()))
+                : users.byHandle(Contacts.handle(input.handle()));
         if (target == null) throw new AuthException(HttpStatus.NOT_FOUND, "未找到该账号");
         if (target.id() == me) throw new AuthException(HttpStatus.BAD_REQUEST, "不能添加自己为好友");
         long low = Math.min(me, target.id()), high = Math.max(me, target.id());

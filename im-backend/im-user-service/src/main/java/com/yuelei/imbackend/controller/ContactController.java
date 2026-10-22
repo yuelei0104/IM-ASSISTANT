@@ -23,6 +23,12 @@ public class ContactController {
         return contacts.find(authorization, handle);
     }
 
+    @GetMapping("/users/phone/{phone}")
+    public ContactProfile findByPhone(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                      @PathVariable String phone) {
+        return contacts.findByPhone(authorization, phone);
+    }
+
     @GetMapping
     public List<ContactProfile> friends(@RequestHeader(value = "Authorization", required = false) String authorization) {
         return contacts.friends(authorization);

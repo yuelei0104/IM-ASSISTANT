@@ -52,7 +52,29 @@ class ContactServiceTest {
         when(users.byHandle("self_10"))
                 .thenReturn(new UserAccount(10L, "self", "self_10", null, "self@example.com", "hash"));
 
-        assertThrows(AuthException.class, () -> service.invite("Bearer token", new Invite("self_10", "hi")));
+        assertThrows(AuthException.class, () -> service.invite("Bearer token", new Invite("self_10", null, "hi")));
         verify(contacts, never()).invite(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    void phoneLookupAndInvitationUseTheBoundPhoneWithoutExposingIt() {
+        when(sessions.requireUserId("Bearer token")).thenReturn(10L);
+        when(users.byPhone("13800138000"))
+                .thenReturn(new UserAccount(25L, "friend", "friend_25", "13800138000", null, "hash"));
+
+        var profile = service.findByPhone("Bearer token", "138 0013 8000");
+        service.invite("Bearer token", new Invite(null, "138 0013 8000", "hi"));
+
+        org.junit.jupiter.api.Assertions.assertEquals("friend_25", profile.handle());
+        verify(users, times(2)).byPhone("13800138000");
+        verify(contacts).invite(10L, 25L, "hi");
+    }
+
+    @Test
+    void invitationMustSpecifyExactlyOneIdentifier() {
+        when(sessions.requireUserId("Bearer token")).thenReturn(10L);
+        assertThrows(AuthException.class, () -> service.invite("Bearer token", new Invite(null, null, "hi")));
+        assertThrows(AuthException.class, () -> service.invite("Bearer token", new Invite("user_25", "13800138000", "hi")));
+        verifyNoInteractions(users, contacts);
     }
 }

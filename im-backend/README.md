@@ -78,9 +78,11 @@ Flyway also creates `im_friend_request` and `im_friendship` with migration V2.
 The `Authorization: Bearer <token>` header is required for the following
 `/api/contacts` endpoints:
 
-- `GET /users/{handle}` looks up a public profile by exact handle.
+- `GET /users/{handle}` looks up a public profile by exact handle;
+  `GET /users/phone/{phone}` looks up an account by its bound phone number.
 - `GET /` lists friends; `GET /requests` lists up to 100 recent or pending requests.
-- `POST /requests` accepts `{ "handle": "other_user", "note": "你好" }`.
+- `POST /requests` accepts `{ "handle": "other_user", "note": "你好" }` or
+  `{ "phone": "13800138000", "note": "你好" }`; provide exactly one identifier.
 - `POST /requests/{id}/accept`, `/reject`, `/withdraw` handle a pending request.
 - `DELETE /{friendId}` removes an established friendship.
 

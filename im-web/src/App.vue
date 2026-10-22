@@ -36,6 +36,7 @@ import {
 import {
   deleteFriend,
   findUser,
+  findUserByPhone,
   inviteFriend,
   listFriends,
   listRequests,
@@ -149,7 +150,8 @@ const showSummary = ref(false);
 const taskDraft = ref("");
 const groupName = ref("");
 const inviteIds = ref<string[]>([]);
-const friendHandle = ref("");
+const friendSearchType = ref<"phone" | "handle">("phone");
+const friendQuery = ref("");
 const friendNote = ref("");
 const friendError = ref("");
 const friendBusy = ref(false);
@@ -593,18 +595,33 @@ function send() {
   notify("已保存在本地；接入消息接口后才能发送给其他人");
 }
 async function searchFriend() {
-  const handle = friendHandle.value.trim().replace(/^@/, "").toLowerCase();
+  const type = friendSearchType.value;
+  const query =
+    type === "phone"
+      ? normalizeContact("phone", friendQuery.value)
+      : friendQuery.value.trim().replace(/^@/, "").toLowerCase();
   friendError.value = "";
   foundProfile.value = null;
-  if (!/^[a-z0-9_]{3,20}$/.test(handle)) {
-    friendError.value = "请输入 3–20 位字母、数字或下划线账号";
+  if (
+    type === "phone"
+      ? !validContact("phone", query)
+      : !/^[a-z0-9_]{3,20}$/.test(query)
+  ) {
+    friendError.value =
+      type === "phone"
+        ? "请输入正确的中国大陆手机号"
+        : "请输入 3–20 位字母、数字或下划线账号";
     return;
   }
   friendBusy.value = true;
   try {
-    const profile = await findUser(handle);
-    if (friendHandle.value.trim().replace(/^@/, "").toLowerCase() !== handle)
-      return;
+    const profile =
+      type === "phone" ? await findUserByPhone(query) : await findUser(query);
+    const current =
+      type === "phone"
+        ? normalizeContact("phone", friendQuery.value)
+        : friendQuery.value.trim().replace(/^@/, "").toLowerCase();
+    if (friendSearchType.value !== type || current !== query) return;
     if (profile.id === currentAccount.value?.id)
       throw new Error("不能添加自己为好友");
     if (contactProfiles.value.some((p) => p.id === profile.id))
@@ -621,7 +638,11 @@ async function requestFriend() {
   friendBusy.value = true;
   friendError.value = "";
   try {
-    await inviteFriend(foundProfile.value.handle, friendNote.value.trim());
+    const identifier =
+      friendSearchType.value === "phone"
+        ? { phone: normalizeContact("phone", friendQuery.value) }
+        : { handle: foundProfile.value.handle };
+    await inviteFriend(identifier, friendNote.value.trim());
     modal.value = null;
     page.value = "requests";
     await refreshContacts();
@@ -658,7 +679,8 @@ async function removeFriend(p: Person) {
 function openModal(m: Modal) {
   modal.value = m;
   inviteIds.value = [];
-  friendHandle.value = "";
+  friendSearchType.value = "phone";
+  friendQuery.value = "";
   friendNote.value = "";
   friendError.value = "";
   foundProfile.value = null;
@@ -2231,14 +2253,44 @@ onBeforeUnmount(() => {
         </div>
         <template v-if="modal === 'friend'"
           ><p class="modal-lead">
-            输入对方注册时设置的唯一账号，查找后发送申请。
+            用对方已绑定的手机号或唯一账号查找，确认昵称后再发送申请。
           </p>
-          <label class="field-label" for="friend-handle">对方账号</label>
-          <div class="input-prefix">
+          <div class="auth-tabs" role="group" aria-label="查找方式">
+            <button
+              type="button"
+              :class="{ active: friendSearchType === 'phone' }"
+              :aria-pressed="friendSearchType === 'phone'"
+              @click="
+                friendSearchType = 'phone';
+                friendQuery = '';
+                foundProfile = null;
+                friendError = '';
+              "
+            >
+              手机号
+            </button>
+            <button
+              type="button"
+              :class="{ active: friendSearchType === 'handle' }"
+              :aria-pressed="friendSearchType === 'handle'"
+              @click="
+                friendSearchType = 'handle';
+                friendQuery = '';
+                foundProfile = null;
+                friendError = '';
+              "
+            >
+              唯一账号
+            </button>
+          </div>
+          <label class="field-label" for="friend-query">{{
+            friendSearchType === "phone" ? "对方手机号" : "对方账号"
+          }}</label>
+          <div v-if="friendSearchType === 'handle'" class="input-prefix">
             <span>@</span
             ><input
-              id="friend-handle"
-              v-model="friendHandle"
+              id="friend-query"
+              v-model="friendQuery"
               placeholder="输入唯一账号"
               @input="
                 foundProfile = null;
@@ -2247,13 +2299,27 @@ onBeforeUnmount(() => {
               @keydown.enter.prevent="searchFriend"
             />
           </div>
+          <input
+            v-else
+            id="friend-query"
+            v-model="friendQuery"
+            type="tel"
+            inputmode="tel"
+            autocomplete="off"
+            placeholder="输入已绑定的手机号"
+            @input="
+              foundProfile = null;
+              friendError = '';
+            "
+            @keydown.enter.prevent="searchFriend"
+          />
           <button
             class="outline-button"
             type="button"
-            :disabled="friendBusy || !friendHandle.trim()"
+            :disabled="friendBusy || !friendQuery.trim()"
             @click="searchFriend"
           >
-            {{ friendBusy ? "查询中…" : "查找账号" }}
+            {{ friendBusy ? "查询中…" : "查找用户" }}
           </button>
           <p v-if="foundProfile" class="success-text" role="status">
             找到 {{ foundProfile.nickname }} · @{{ foundProfile.handle }}

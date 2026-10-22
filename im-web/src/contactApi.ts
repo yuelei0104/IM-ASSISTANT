@@ -53,8 +53,12 @@ export const listFriends = () => request<ContactProfile[]>("");
 export const listRequests = () => request<ContactRequest[]>("/requests");
 export const findUser = (handle: string) =>
   request<ContactProfile>(`/users/${encodeURIComponent(handle)}`);
-export const inviteFriend = (handle: string, note: string) =>
-  request<void>("/requests", "POST", { handle, note });
+export const findUserByPhone = (phone: string) =>
+  request<ContactProfile>(`/users/phone/${encodeURIComponent(phone)}`);
+export const inviteFriend = (
+  identifier: { handle: string } | { phone: string },
+  note: string,
+) => request<void>("/requests", "POST", { ...identifier, note });
 export const resolveFriendRequest = (
   id: number,
   action: "accept" | "reject" | "withdraw",
