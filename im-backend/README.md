@@ -167,5 +167,15 @@ the inbox row in the same database transaction as the message, and unread
 queries count only the indexed unread range for each peer.
 Previously opened friend conversations keep a per-account browser entry after
 removal, so either participant can still reopen their history on that browser.
-Existing example discussions and their assistant tools are still local demos;
-delivery receipts and group messages follow in later steps.
+Group chats are persisted in MySQL (chat Flyway V4), with membership checks,
+50-member capacity, cursor-based history and unread counts. Inviting a new
+member sets their history cursor to the latest committed group message.
+Chat Flyway V5 creates `im_group_mention_notice`. A group message can include
+`mentionedUserIds` (up to 10 current members other than the sender). Sending
+the same `clientMsgId` again with the same body and mentions returns the
+existing message without duplicating notices. The notification inbox is
+`GET /api/chats/notices?limit=50&beforeId=123`; read one via
+`POST /api/chats/notices/{id}/read`, or all via
+`POST /api/chats/notices/read-all`. A `NOTICE` WebSocket event prompts the
+browser to reload the authenticated inbox; polling fills gaps after disconnect.
+Assistant summaries and tasks remain browser demos.

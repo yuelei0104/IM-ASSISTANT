@@ -1,8 +1,8 @@
 package com.yuelei.imchat.service;
 
 import com.yuelei.imchat.dao.GroupDao;
+import com.yuelei.imchat.dao.NoticeDao;
 import com.yuelei.imchat.dto.GroupDtos;
-import com.yuelei.imchat.dto.MessageDtos.Send;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.GroupChat;
 import com.yuelei.imchat.model.GroupMessage;
@@ -21,11 +21,14 @@ public class GroupService {
     private final GroupDao dao;
     private final UserAccessClient access;
     private final ApplicationEventPublisher events;
+    private final NoticeDao notices;
 
-    public GroupService(GroupDao dao, UserAccessClient access, ApplicationEventPublisher events) {
+    public GroupService(GroupDao dao, UserAccessClient access, ApplicationEventPublisher events,
+                        NoticeDao notices) {
         this.dao = dao;
         this.access = access;
         this.events = events;
+        this.notices = notices;
     }
 
     @Transactional
@@ -87,19 +90,36 @@ public class GroupService {
     }
 
     @Transactional
-    public GroupMessage send(String authorization, long groupId, Send input) {
+    public GroupMessage send(String authorization, long groupId, GroupDtos.SendGroup input) {
         long sender = access.requireUser(authorization);
         if (dao.lockGroup(groupId) == null) throw new ChatException(HttpStatus.NOT_FOUND, "讨论室不存在");
         requireMember(groupId, sender);
         String body = input.body().trim();
         if (body.isEmpty()) throw new ChatException(HttpStatus.BAD_REQUEST, "消息不能为空");
+        List<Long> targets = input.mentionedUserIds();
+        if (targets == null || targets.size() > 10
+                || targets.stream().anyMatch(id -> id == null || id <= 0 || id == sender)
+                || new HashSet<>(targets).size() != targets.size()
+                || !new HashSet<>(dao.memberIds(groupId)).containsAll(targets))
+            throw new ChatException(HttpStatus.BAD_REQUEST, "只能提醒当前讨论室中的其他成员，最多 10 人");
+        GroupMessage prior = dao.byClientId(sender, input.clientMsgId());
+        if (prior != null) return existing(prior, groupId, body, targets);
         dao.insertMessage(groupId, sender, input.clientMsgId(), body);
         GroupMessage saved = dao.byClientId(sender, input.clientMsgId());
         if (saved == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "消息保存失败");
         if (saved.groupId() != groupId || !saved.body().equals(body))
             throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于另一条消息");
+        for (long recipient : targets) notices.add(groupId, saved.id(), sender, recipient);
         events.publishEvent(new GroupEvent(groupId, saved.id(), dao.memberIds(groupId)));
+        if (!targets.isEmpty()) events.publishEvent(new MentionEvent(List.copyOf(targets)));
         return saved;
+    }
+
+    private GroupMessage existing(GroupMessage prior, long groupId, String body, List<Long> targets) {
+        if (prior.groupId() != groupId || !prior.body().equals(body)
+                || !notices.recipients(prior.id()).equals(targets.stream().sorted().toList()))
+            throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于另一条消息");
+        return prior;
     }
 
     public GroupDtos.Page history(String authorization, long groupId, Long beforeId, int limit) {
@@ -113,6 +133,14 @@ public class GroupService {
         Long next = older ? page.get(page.size() - 1).id() : null;
         Collections.reverse(page);
         return new GroupDtos.Page(page, next);
+    }
+
+    public GroupMessage message(String authorization, long groupId, long messageId) {
+        long userId = access.requireUser(authorization);
+        var membership = requireMember(groupId, userId);
+        var message = dao.messageById(groupId, messageId, membership.joinedAfterId());
+        if (message == null) throw new ChatException(HttpStatus.NOT_FOUND, "消息不存在或不可查看");
+        return message;
     }
 
     public void markRead(String authorization, long groupId, long messageId) {

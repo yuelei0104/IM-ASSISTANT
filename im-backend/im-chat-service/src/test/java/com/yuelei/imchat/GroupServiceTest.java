@@ -1,12 +1,13 @@
 package com.yuelei.imchat;
 
 import com.yuelei.imchat.dao.GroupDao;
+import com.yuelei.imchat.dao.NoticeDao;
 import com.yuelei.imchat.dto.GroupDtos;
-import com.yuelei.imchat.dto.MessageDtos.Send;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.GroupMessage;
 import com.yuelei.imchat.service.GroupEvent;
 import com.yuelei.imchat.service.GroupService;
+import com.yuelei.imchat.service.MentionEvent;
 import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
@@ -22,7 +23,8 @@ class GroupServiceTest {
     private final GroupDao dao = mock(GroupDao.class);
     private final UserAccessClient access = mock(UserAccessClient.class);
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
-    private final GroupService service = new GroupService(dao, access, events);
+    private final NoticeDao notices = mock(NoticeDao.class);
+    private final GroupService service = new GroupService(dao, access, events, notices);
     private static final String ID = "e9873e73-1326-4329-a4c0-936912a48e37";
 
     @Test
@@ -68,14 +70,39 @@ class GroupServiceTest {
         when(access.requireUser("Bearer t")).thenReturn(9L);
         when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
         assertThrows(ChatException.class, () ->
-                service.send("Bearer t", 4, new Send(ID, "你好")));
+                service.send("Bearer t", 4, new GroupDtos.SendGroup(ID, "你好", List.of())));
         verify(dao, never()).insertMessage(anyLong(), anyLong(), any(), any());
 
         when(dao.membership(4, 9)).thenReturn(new GroupDao.Membership(0, 0));
         when(dao.byClientId(9, ID)).thenReturn(
                 new GroupMessage(51, 4, 9, ID, "另一条消息", LocalDateTime.now()));
         assertThrows(ChatException.class, () ->
-                service.send("Bearer t", 4, new Send(ID, "你好")));
+                service.send("Bearer t", 4, new GroupDtos.SendGroup(ID, "你好", List.of())));
         verifyNoInteractions(events);
+    }
+
+    @Test
+    void mentionsAreRestrictedToMembersAndOnlyInsertedOnceForRetries() {
+        when(access.requireUser("Bearer t")).thenReturn(9L);
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+        when(dao.membership(4, 9)).thenReturn(new GroupDao.Membership(0, 0));
+        when(dao.memberIds(4)).thenReturn(List.of(9L, 10L));
+        var input = new GroupDtos.SendGroup(ID, "@伙伴#10 请看", List.of(10L));
+        assertThrows(ChatException.class, () ->
+                service.send("Bearer t", 4, new GroupDtos.SendGroup(ID, "请看", List.of(11L))));
+        verify(dao, never()).insertMessage(anyLong(), anyLong(), any(), any());
+
+        var saved = new GroupMessage(51, 4, 9, ID, "@伙伴#10 请看", LocalDateTime.now());
+        when(dao.byClientId(9, ID)).thenReturn(null, saved);
+        assertEquals(saved, service.send("Bearer t", 4, input));
+        verify(notices).add(4, 51, 9, 10);
+        verify(events).publishEvent(new MentionEvent(List.of(10L)));
+        verify(events).publishEvent(new GroupEvent(4, 51, List.of(9L, 10L)));
+
+        when(notices.recipients(51)).thenReturn(List.of(10L));
+        assertEquals(saved, service.send("Bearer t", 4, input));
+        verify(notices, times(1)).add(4, 51, 9, 10);
+        verify(dao, times(1)).insertMessage(4, 9, ID, "@伙伴#10 请看");
+        verifyNoMoreInteractions(events);
     }
 }

@@ -27,7 +27,7 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   assert.deepEqual(JSON.parse(calls[2].options.body), { friendIds: [5] });
   assert.equal(calls[3].url, "/api/chats/groups/4/messages?limit=50&beforeId=31");
   assert.deepEqual(JSON.parse(calls[4].options.body), {
-    clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e37", body: "你好",
+    clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e37", body: "你好", mentionedUserIds: [],
   });
   assert.deepEqual(JSON.parse(calls[5].options.body), { lastReadMessageId: 34 });
 });

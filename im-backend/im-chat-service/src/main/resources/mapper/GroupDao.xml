@@ -69,6 +69,11 @@
         SELECT id, group_id, sender_id, client_msg_id, body, created_at
         FROM im_group_message WHERE sender_id = #{senderId} AND client_msg_id = #{clientMsgId}
     </select>
+    <select id="messageById" resultMap="groupMessage">
+        SELECT id, group_id, sender_id, client_msg_id, body, created_at
+        FROM im_group_message
+        WHERE group_id = #{groupId} AND id = #{messageId} AND id &gt; #{joinedAfterId}
+    </select>
     <select id="history" resultMap="groupMessage">
         SELECT id, group_id, sender_id, client_msg_id, body, created_at
         FROM im_group_message FORCE INDEX (idx_group_history)

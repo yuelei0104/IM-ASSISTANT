@@ -35,6 +35,8 @@ public interface GroupDao {
     int insertMessage(@Param("groupId") long groupId, @Param("senderId") long senderId,
                       @Param("clientMsgId") String clientMsgId, @Param("body") String body);
     GroupMessage byClientId(@Param("senderId") long senderId, @Param("clientMsgId") String clientMsgId);
+    GroupMessage messageById(@Param("groupId") long groupId, @Param("messageId") long messageId,
+                             @Param("joinedAfterId") long joinedAfterId);
     List<GroupMessage> history(@Param("groupId") long groupId, @Param("joinedAfterId") long joinedAfterId,
                                @Param("beforeId") Long beforeId, @Param("limit") int limit);
     Long validMessage(@Param("groupId") long groupId, @Param("messageId") long messageId,

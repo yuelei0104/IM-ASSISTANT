@@ -49,7 +49,9 @@ export const inviteGroupMembers = (id: number, friendIds: number[]) =>
   request<GroupChat>(`/${id}/members`, { friendIds });
 export const loadGroupMessages = (id: number, beforeId?: number) =>
   request<GroupPage>(`/${id}/messages?limit=50${beforeId ? `&beforeId=${beforeId}` : ""}`);
-export const sendGroupMessage = (id: number, clientMsgId: string, body: string) =>
-  request<GroupMessage>(`/${id}/messages`, { clientMsgId, body });
+export const getGroupMessage = (id: number, messageId: number) =>
+  request<GroupMessage>(`/${id}/messages/${messageId}`);
+export const sendGroupMessage = (id: number, clientMsgId: string, body: string, mentionedUserIds: number[] = []) =>
+  request<GroupMessage>(`/${id}/messages`, { clientMsgId, body, mentionedUserIds });
 export const markGroupRead = (id: number, lastReadMessageId: number) =>
   request<void>(`/${id}/read`, { lastReadMessageId });

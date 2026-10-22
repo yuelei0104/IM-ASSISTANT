@@ -62,7 +62,7 @@ export function markDirectRead(peerId: number, lastReadMessageId: number) {
   return request<void>(`/${peerId}/read`, { lastReadMessageId });
 }
 
-export function connectChatSocket(onUpdate: (kind?: "direct" | "group") => void) {
+export function connectChatSocket(onUpdate: (kind?: "direct" | "group" | "notice") => void) {
   let socket: WebSocket | null = null;
   let authenticated = false;
   let stopped = false;
@@ -95,6 +95,8 @@ export function connectChatSocket(onUpdate: (kind?: "direct" | "group") => void)
         onUpdate("direct");
       } else if (/^GROUP \d+ \d+$/.test(event.data)) {
         onUpdate("group");
+      } else if (event.data === "NOTICE") {
+        onUpdate("notice");
       }
     };
     client.onclose = () => {

@@ -45,9 +45,10 @@ import {
 } from "./contactApi";
 import { connectChatSocket, listUnreadDirect, loadDirectMessages, markDirectRead, sendDirectMessage, type DirectMessage } from "./chatApi";
 import {
-  createGroupChat, inviteGroupMembers, listGroups, loadGroupMessages,
+  createGroupChat, getGroupMessage, inviteGroupMembers, listGroups, loadGroupMessages,
   markGroupRead, sendGroupMessage, type GroupChat, type GroupMessage,
 } from "./groupApi";
+import { listMentionNotices, markAllMentionsRead, markMentionRead, type MentionNotice } from "./noticeApi";
 import {
   initialState,
   selfId,
@@ -154,6 +155,8 @@ const page = ref<Page>("chat");
 const activeId = ref("");
 const search = ref("");
 const composer = ref("");
+const mentionPickerOpen = ref(false);
+const mentionSelections = ref<Record<number, string>>({});
 const modal = ref<Modal>(null);
 const infoOpen = ref(false);
 const assistantOpen = ref(false);
@@ -184,7 +187,12 @@ const groupBusy = ref(false);
 let groupsSeq = 0;
 const groupReadInFlight = new Set<number>();
 const groupLastRead = new Map<number, number>();
-let groupPendingSend: { groupId: number; text: string; clientMsgId: string } | null = null;
+let groupPendingSend: { groupId: number; text: string; mentions: string; clientMsgId: string } | null = null;
+const mentionNotices = ref<MentionNotice[]>([]);
+const noticeNextBeforeId = ref<number | null>(null);
+const noticeUnreadCount = ref(0);
+const noticeError = ref("");
+let noticeSeq = 0;
 const directUnread = ref<Record<number, number>>({});
 const lastMarkedRead = new Map<number, number>();
 const readInFlight = new Set<number>();
@@ -237,6 +245,8 @@ watch(knownPeers, (peers) => {
   try { localStorage.setItem(peerCacheKey(currentAccount.value.id), JSON.stringify(peers)); } catch {}
 }, { deep: true });
 watch(activeId, () => {
+  mentionPickerOpen.value = false;
+  mentionSelections.value = {};
   showSummary.value = false;
   showOlder.value = false;
   stopVoice();
@@ -257,6 +267,7 @@ watch(page, () => {
   if (page.value !== "chat") mobileChatOpen.value = false;
   if (page.value === "contacts" || page.value === "requests")
     void refreshContacts();
+  if (page.value === "notices") void refreshNotices();
   if (page.value === "chat" && directPeer(activeId.value)) void refreshDirectChat();
   if (page.value === "chat" && serverGroupId(activeId.value)) void refreshGroupChat();
 });
@@ -344,7 +355,7 @@ const received = computed(() =>
 const sent = computed(() =>
   contactRequests.value.filter((r) => r.fromId === currentAccount.value?.id),
 );
-const unread = computed(() => data.value.notices.filter((n) => !n.read).length);
+const unread = computed(() => noticeUnreadCount.value);
 const openTasks = computed(
   () => data.value.todos.filter((t) => !t.done).length,
 );
@@ -603,7 +614,9 @@ async function refreshGroupChat() {
     mergeGroup(result.messages);
     chatError.value = "";
     await nextTick();
-    scrollBottom();
+    if (focusId.value)
+      document.getElementById(`msg-${focusId.value}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    else scrollBottom();
     void markVisibleGroupRead(groupId);
   } catch (error) {
     if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "群消息加载失败";
@@ -634,15 +647,58 @@ async function loadOlderGroup() {
     if (sequence === chatSeq) chatBusy.value = false;
   }
 }
-function onChatEvent(kind?: "direct" | "group") {
+async function refreshNotices() {
+  const accountId = currentAccount.value?.id;
+  if (!accountId) return;
+  const sequence = ++noticeSeq;
+  try {
+    const result = await listMentionNotices();
+    if (sequence !== noticeSeq || currentAccount.value?.id !== accountId) return;
+    const byId = new Map(mentionNotices.value.map((n) => [n.id, n]));
+    for (const item of result.items) byId.set(item.id, item);
+    mentionNotices.value = [...byId.values()].sort((a, b) => b.id - a.id);
+    noticeNextBeforeId.value = result.nextBeforeId;
+    noticeUnreadCount.value = result.unreadCount;
+    noticeError.value = "";
+  } catch (error) {
+    if (sequence === noticeSeq) noticeError.value = error instanceof Error ? error.message : "通知加载失败";
+  }
+}
+async function loadOlderNotices() {
+  const cursor = noticeNextBeforeId.value;
+  const accountId = currentAccount.value?.id;
+  if (!cursor || !accountId) return;
+  const sequence = ++noticeSeq;
+  try {
+    const result = await listMentionNotices(cursor);
+    if (sequence !== noticeSeq || currentAccount.value?.id !== accountId) return;
+    const byId = new Map(mentionNotices.value.map((n) => [n.id, n]));
+    for (const item of result.items) byId.set(item.id, item);
+    mentionNotices.value = [...byId.values()].sort((a, b) => b.id - a.id);
+    noticeNextBeforeId.value = result.nextBeforeId;
+    noticeUnreadCount.value = result.unreadCount;
+    noticeError.value = "";
+  } catch (error) {
+    noticeError.value = error instanceof Error ? error.message : "加载历史通知失败";
+  }
+}
+function mentionMember(id: string) {
+  const memberId = Number(id.slice(5));
+  const token = `@${person(id).name}#${memberId}`;
+  mentionSelections.value[memberId] = token;
+  composer.value += `${composer.value && !/\s$/.test(composer.value) ? " " : ""}${token} `;
+  mentionPickerOpen.value = false;
+}
+function onChatEvent(kind?: "direct" | "group" | "notice") {
   if (!currentAccount.value) return;
-  if (kind !== "group") void refreshUnread();
-  if (kind !== "direct") void refreshGroups();
-  if (kind !== "group" && page.value === "chat" && directPeer(activeId.value)) {
+  if (!kind || kind === "direct") void refreshUnread();
+  if (!kind || kind === "group") void refreshGroups();
+  if (!kind || kind === "notice") void refreshNotices();
+  if ((!kind || kind === "direct") && page.value === "chat" && directPeer(activeId.value)) {
     if (chatBusy.value) pendingRealtimeRefresh = true;
     else void refreshDirectChat();
   }
-  if (kind !== "direct" && page.value === "chat" && serverGroupId(activeId.value))
+  if ((!kind || kind === "group") && page.value === "chat" && serverGroupId(activeId.value))
     void refreshGroupChat();
 }
 const chatPoll = setInterval(() => {
@@ -740,6 +796,12 @@ function applyAccount(account: Account) {
   groupLastRead.clear();
   groupReadInFlight.clear();
   groupPendingSend = null;
+  mentionNotices.value = [];
+  noticeNextBeforeId.value = null;
+  noticeUnreadCount.value = 0;
+  noticeError.value = "";
+  noticeSeq++;
+  mentionSelections.value = {};
   groupsSeq++;
   activeId.value = "";
   data.value = load(account);
@@ -753,6 +815,7 @@ function applyAccount(account: Account) {
   void refreshContacts();
   void refreshUnread();
   void refreshGroups();
+  void refreshNotices();
   chatSocket = connectChatSocket(onChatEvent);
   nextTick(scrollBottom);
 }
@@ -966,6 +1029,12 @@ async function signOut() {
   groupLastRead.clear();
   groupReadInFlight.clear();
   groupPendingSend = null;
+  mentionNotices.value = [];
+  noticeNextBeforeId.value = null;
+  noticeUnreadCount.value = 0;
+  noticeError.value = "";
+  noticeSeq++;
+  mentionSelections.value = {};
   groupsSeq++;
   contactRequests.value = [];
   currentAccount.value = null;
@@ -1033,16 +1102,22 @@ async function send() {
   if (!groupId) return;
   const accountId = currentAccount.value?.id;
   if (!accountId) return;
+  const mentionedUserIds = Object.entries(mentionSelections.value)
+    .filter(([, token]) => text.includes(token))
+    .map(([id]) => Number(id)).sort((a, b) => a - b);
+  const mentions = mentionedUserIds.join(",");
   const clientMsgId = groupPendingSend?.groupId === groupId && groupPendingSend.text === text
+    && groupPendingSend.mentions === mentions
     ? groupPendingSend.clientMsgId : crypto.randomUUID();
-  groupPendingSend = { groupId, text, clientMsgId };
+  groupPendingSend = { groupId, text, mentions, clientMsgId };
   sending.value = true;
   try {
-    const saved = await sendGroupMessage(groupId, clientMsgId, text);
+    const saved = await sendGroupMessage(groupId, clientMsgId, text, mentionedUserIds);
     if (currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return;
     mergeGroup([saved]);
     composer.value = "";
     groupPendingSend = null;
+    mentionSelections.value = {};
     chatError.value = "";
     nextTick(scrollBottom);
   } catch (error) {
@@ -1157,11 +1232,41 @@ async function addMembers() {
     groupBusy.value = false;
   }
 }
-function openNotice(id: string) {
-  const n = data.value.notices.find((n) => n.id === id);
-  if (!n) return;
-  n.read = true;
-  if (n.sourceConversationId) openChat(n.sourceConversationId, n.sourceId);
+async function openNotice(n: MentionNotice) {
+  try {
+    const id = `server-group-${n.groupId}`;
+    if (!serverGroups.value.some((g) => g.id === n.groupId)) await refreshGroups();
+    if (!serverGroups.value.some((g) => g.id === n.groupId)) throw new Error("无法找到此讨论室");
+    const target = await getGroupMessage(n.groupId, n.messageId);
+    if (!n.readAt) {
+      await markMentionRead(n.id);
+      n.readAt = new Date().toISOString();
+      noticeUnreadCount.value = Math.max(0, noticeUnreadCount.value - 1);
+    }
+    openChat(id);
+    if (activeId.value !== id) return;
+    await nextTick();
+    mergeGroup([target]);
+    focusId.value = `group-message-${target.id}`;
+    await nextTick();
+    document.getElementById(`msg-${focusId.value}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => (focusId.value = ""), 3000);
+  } catch (error) {
+    noticeError.value = error instanceof Error ? error.message : "打开通知失败";
+    notify(noticeError.value);
+  }
+}
+async function readAllNotices() {
+  try {
+    await markAllMentionsRead();
+    mentionNotices.value = mentionNotices.value.map((n) => ({
+      ...n, readAt: n.readAt || new Date().toISOString(),
+    }));
+    noticeUnreadCount.value = 0;
+    void refreshNotices();
+  } catch (error) {
+    noticeError.value = error instanceof Error ? error.message : "标记失败";
+  }
 }
 function addTask() {
   const title = taskDraft.value.trim();
@@ -1243,6 +1348,7 @@ function visibility() {
   else if (currentAccount.value) {
     void refreshUnread();
     void refreshGroups();
+    void refreshNotices();
     if (page.value === "chat" && directPeer(activeId.value)) void refreshDirectChat();
     if (page.value === "chat" && serverGroupId(activeId.value)) void refreshGroupChat();
   }
@@ -1941,6 +2047,13 @@ onBeforeUnmount(() => {
               placeholder="写点什么，继续这段讨论…"
               @keydown.enter.exact.prevent="send"
             />
+            <div v-if="mentionPickerOpen && serverGroupId(activeId)" class="mention-picker" role="group" aria-label="选择要提醒的群成员">
+              <button v-for="id in active.memberIds.filter((member) => member !== 'me')"
+                :key="id" type="button" class="text-button" @click="mentionMember(id)">
+                @{{ person(id).name }} · {{ id.replace('user-', '') }}
+              </button>
+              <span v-if="active.memberIds.length <= 1">暂无其他成员</span>
+            </div>
             <div class="composer-tools">
               <div class="tool-left">
                 <button
@@ -1952,10 +2065,11 @@ onBeforeUnmount(() => {
                 >
                   <AppIcon name="mic" :size="18" /></button
                 ><button
+                  v-if="serverGroupId(activeId)"
                   class="tool-button"
-                  title="提及成员"
+                  title="选择要提醒的成员"
                   aria-label="提及成员"
-                  @click="composer += '@'"
+                  @click="mentionPickerOpen = !mentionPickerOpen"
                 >
                   <AppIcon name="at" :size="18" /></button
                 ><span class="composer-tip"
@@ -2284,36 +2398,34 @@ onBeforeUnmount(() => {
       <div v-if="page === 'notices'" class="page-content">
         <div class="content-card">
           <div class="card-heading">
-            <h2>最近动态</h2>
+            <h2>点名提醒</h2>
             <button
               class="text-button"
-              @click="data.notices.forEach((n) => (n.read = true))"
+              :disabled="!unread"
+              @click="readAllNotices"
             >
               全部标为已读
             </button>
           </div>
+          <p v-if="noticeError" class="error-text" role="alert">{{ noticeError }}
+            <button class="text-button" @click="refreshNotices">重试</button>
+          </p>
           <button
-            v-for="n in data.notices"
+            v-for="n in mentionNotices"
             :key="n.id"
-            :class="['notice-row', { unread: !n.read }]"
-            @click="openNotice(n.id)"
+            :class="['notice-row', { unread: !n.readAt }]"
+            @click="openNotice(n)"
           >
             <span class="notice-icon"
-              ><AppIcon
-                :name="
-                  n.type === 'mention'
-                    ? 'at'
-                    : n.type === 'activity'
-                      ? 'clock'
-                      : 'sparkles'
-                "
-                :size="19" /></span
+              ><AppIcon name="at" :size="19" /></span
             ><span class="notice-body"
-              ><strong>{{ n.title }}</strong
-              ><span>{{ n.description }}</span></span
-            ><small>{{ n.time }}</small
-            ><span v-if="!n.read" class="notice-dot" />
+              ><strong>{{ person(`user-${n.senderId}`).name }} 在「{{ n.groupName }}」中提到了你</strong
+              ><span>{{ n.body.slice(0, 100) }}</span></span
+            ><small>{{ new Date(n.createdAt).toLocaleString("zh-CN") }}</small
+            ><span v-if="!n.readAt" class="notice-dot" />
           </button>
+          <p v-if="!mentionNotices.length && !noticeError" class="empty-list">还没有点名提醒</p>
+          <button v-if="noticeNextBeforeId" class="text-button" @click="loadOlderNotices">加载更早提醒</button>
         </div>
       </div>
       <div v-if="page === 'tasks'" class="page-content">

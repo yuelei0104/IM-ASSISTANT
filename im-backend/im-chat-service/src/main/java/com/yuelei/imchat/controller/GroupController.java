@@ -1,7 +1,6 @@
 package com.yuelei.imchat.controller;
 
 import com.yuelei.imchat.dto.GroupDtos;
-import com.yuelei.imchat.dto.MessageDtos.Send;
 import com.yuelei.imchat.model.GroupChat;
 import com.yuelei.imchat.model.GroupMessage;
 import com.yuelei.imchat.service.GroupService;
@@ -43,7 +42,7 @@ public class GroupController {
 
     @PostMapping("/{groupId}/messages")
     public GroupMessage send(@RequestHeader(value = "Authorization", required = false) String auth,
-                             @PathVariable long groupId, @Valid @RequestBody Send request) {
+                             @PathVariable long groupId, @Valid @RequestBody GroupDtos.SendGroup request) {
         return groups.send(auth, groupId, request);
     }
 
@@ -53,6 +52,12 @@ public class GroupController {
                                   @RequestParam(required = false) Long beforeId,
                                   @RequestParam(defaultValue = "50") int limit) {
         return groups.history(auth, groupId, beforeId, limit);
+    }
+
+    @GetMapping("/{groupId}/messages/{messageId}")
+    public GroupMessage message(@RequestHeader(value = "Authorization", required = false) String auth,
+                                @PathVariable long groupId, @PathVariable long messageId) {
+        return groups.message(auth, groupId, messageId);
     }
 
     @PostMapping("/{groupId}/read")

@@ -41,8 +41,9 @@ test("socket authenticates without URL token and refreshes after a notification"
   opened.onmessage({ data: "READY" });
   opened.onmessage({ data: "MSG 42 2 1" });
   opened.onmessage({ data: "GROUP 7 42" });
+  opened.onmessage({ data: "NOTICE" });
   assert.equal(connection.connected(), true);
-  assert.equal(updates, 3);
+  assert.equal(updates, 4);
   connection.close();
   assert.equal(connection.connected(), false);
 });

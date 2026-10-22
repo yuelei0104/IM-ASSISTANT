@@ -621,6 +621,24 @@ svg {
 .composer textarea::placeholder {
   color: #b1bec3;
 }
+.mention-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  max-height: 110px;
+  overflow: auto;
+  border-top: 1px solid #e3eaed;
+  padding: 10px 0;
+  font-size: 12px;
+  color: #647f89;
+}
+.mention-picker button {
+  border: 1px solid #d5e8e5;
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: #eff8f6;
+  color: #267d83;
+}
 .composer-tools,
 .tool-left {
   display: flex;
@@ -1130,6 +1148,11 @@ svg {
 }
 .notice-row.unread .notice-body strong {
   color: #228f95;
+}
+.notice-body span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .notice-icon {
   display: grid;

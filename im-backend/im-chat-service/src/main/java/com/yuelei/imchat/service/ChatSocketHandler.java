@@ -88,6 +88,10 @@ public class ChatSocketHandler extends TextWebSocketHandler {
             push(userId, "GROUP " + groupId + " " + messageId);
     }
 
+    public void notifyMention(long recipientId) {
+        push(recipientId, "NOTICE");
+    }
+
     private void push(long userId, String payload) {
         for (String id : byUser.getOrDefault(userId, Set.of())) {
             WebSocketSession session = sockets.get(id);
