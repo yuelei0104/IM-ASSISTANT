@@ -486,3 +486,12 @@ select:focus-visible {
     transition: none;
   }
 }
+/* Keep the login page hidden until the server has checked an existing session. */
+.auth-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: #433969;
+  background: #f7f5fb;
+  font-size: 1rem;
+}

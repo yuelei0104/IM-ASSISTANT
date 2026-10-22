@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.yuelei.imbackend.dao.UserDao">
+    <resultMap id="userAccount" type="com.yuelei.imbackend.model.UserAccount">
+        <constructor>
+            <idArg column="id" javaType="_long"/>
+            <arg column="nickname" javaType="java.lang.String"/>
+            <arg column="handle" javaType="java.lang.String"/>
+            <arg column="phone" javaType="java.lang.String"/>
+            <arg column="email" javaType="java.lang.String"/>
+            <arg column="password_hash" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <sql id="columns">id, nickname, handle, phone, email, password_hash</sql>
+
+    <select id="byPhone" resultMap="userAccount">
+        SELECT <include refid="columns"/> FROM im_user WHERE phone = #{phone}
+    </select>
+
+    <select id="byEmail" resultMap="userAccount">
+        SELECT <include refid="columns"/> FROM im_user WHERE email = #{email}
+    </select>
+
+    <select id="byId" resultMap="userAccount">
+        SELECT <include refid="columns"/> FROM im_user WHERE id = #{id}
+    </select>
+
+    <select id="countByHandle" resultType="long">
+        SELECT COUNT(*) FROM im_user WHERE handle = #{handle}
+    </select>
+
+    <select id="countByPhone" resultType="long">
+        SELECT COUNT(*) FROM im_user WHERE phone = #{phone}
+    </select>
+
+    <select id="countByEmail" resultType="long">
+        SELECT COUNT(*) FROM im_user WHERE email = #{email}
+    </select>
+
+    <insert id="create" parameterType="com.yuelei.imbackend.model.NewUser"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO im_user (nickname, handle, phone, email, password_hash)
+        VALUES (#{nickname}, #{handle}, #{phone}, #{email}, #{passwordHash})
+    </insert>
+
+    <update id="bindPhone">
+        UPDATE im_user SET phone = #{phone} WHERE id = #{id} AND phone IS NULL
+    </update>
+
+    <update id="bindEmail">
+        UPDATE im_user SET email = #{email} WHERE id = #{id} AND email IS NULL
+    </update>
+
+    <update id="updatePassword">
+        UPDATE im_user SET password_hash = #{passwordHash} WHERE id = #{id}
+    </update>
+</mapper>

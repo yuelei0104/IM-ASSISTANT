@@ -1,0 +1,26 @@
+name: im-assistant
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${IM_MYSQL_ROOT_PASSWORD:?Set IM_MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: im_assistant
+      MYSQL_USER: im_user
+      MYSQL_PASSWORD: ${IM_MYSQL_PASSWORD:?Set IM_MYSQL_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:13307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  redis:
+    image: redis:7.4
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:16380:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mysql_data:
+  redis_data:

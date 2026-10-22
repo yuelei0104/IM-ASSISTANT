@@ -1,24 +1,38 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import AppIcon from "./components/AppIcon.vue";
 import {
   accountStateKey,
-  accounts,
-  authenticateAccount,
-  authenticateWithCode,
-  bindAccountContact,
+  bindContact as bindAccountContact,
+  checkRegistration,
+  clearSession,
+  currentUser,
+  loginWithCode,
+  loginWithPassword,
+  logout,
+  register,
+  resetPassword,
+  sendCode,
+  sessionToken,
+  ApiError,
+  type Account,
+  type CodePurpose,
+} from "./authApi";
+import {
   normalizeContact,
-  registerAccount,
-  sessionAccount,
-  sessionKey,
   validContact,
   validPassword,
   validateRegistration,
   type ContactType,
-  type DemoAccount,
   type RegistrationInput,
-} from "./demoAuth";
-import { demoCodes, type CodePurpose } from "./demoVerification";
+} from "./authValidation";
 import {
   clock,
   initialState,
@@ -31,8 +45,7 @@ import {
 
 type Page = "chat" | "contacts" | "requests" | "notices" | "tasks" | "settings";
 type Modal = "group" | "invite" | "friend" | null;
-const key = "im-assistant-demo-v1";
-function load(account: DemoAccount | null): DemoState {
+function load(account: Account | null): DemoState {
   if (!account) return initialState();
   try {
     const saved = localStorage.getItem(accountStateKey(account.id));
@@ -43,10 +56,11 @@ function load(account: DemoAccount | null): DemoState {
   } catch {}
   return initialState();
 }
-const currentAccount = ref<DemoAccount | null>(sessionAccount());
+const currentAccount = ref<Account | null>(null);
 const data = ref<DemoState>(load(currentAccount.value));
 const loggedIn = computed(() => currentAccount.value !== null);
-const authMode = ref<"login" | "register">("login");
+const authRestoring = ref(Boolean(sessionToken()));
+const authMode = ref<"login" | "register" | "reset">("login");
 const registerStep = ref<"details" | "verify">("details");
 const pendingRegistration = ref<RegistrationInput | null>(null);
 const contactType = ref<ContactType>("phone");
@@ -78,6 +92,13 @@ const codeHints = ref<Record<CodeSlot, string>>({
   login: "",
   bind: "",
 });
+const codeBusy = ref<Record<CodeSlot, boolean>>({
+  phone: false,
+  email: false,
+  login: false,
+  bind: false,
+});
+const resendAt = ref<Record<string, number>>({});
 const codeTick = ref(Date.now());
 const codeInterval = setInterval(() => (codeTick.value = Date.now()), 1000);
 watch(authPhone, () => {
@@ -259,10 +280,7 @@ function openChat(id: string, source?: string) {
     setTimeout(() => (focusId.value = ""), 3000);
   } else nextTick(scrollBottom);
 }
-function switchAuthMode(next: "login" | "register") {
-  const pending = pendingRegistration.value;
-  if (pending?.phone) demoCodes.consume("register", "phone", pending.phone);
-  if (pending?.email) demoCodes.consume("register", "email", pending.email);
+function switchAuthMode(next: "login" | "register" | "reset") {
   authMode.value = next;
   registerStep.value = "details";
   pendingRegistration.value = null;
@@ -276,9 +294,6 @@ function switchAuthMode(next: "login" | "register") {
   codeHints.value = { phone: "", email: "", login: "", bind: "" };
 }
 function editRegistration() {
-  const pending = pendingRegistration.value;
-  if (pending?.phone) demoCodes.consume("register", "phone", pending.phone);
-  if (pending?.email) demoCodes.consume("register", "email", pending.email);
   registerStep.value = "details";
   pendingRegistration.value = null;
   authPhoneCode.value = "";
@@ -293,16 +308,22 @@ function waitSeconds(
   raw: string,
 ): number {
   void codeTick.value;
-  return demoCodes.remaining(purpose, type, normalizeContact(type, raw));
+  const key = `${purpose}:${type}:${normalizeContact(type, raw)}`;
+  return Math.max(
+    0,
+    Math.ceil(((resendAt.value[key] || 0) - Date.now()) / 1000),
+  );
 }
-function sendDemoCode(
+async function requestCode(
   purpose: CodePurpose,
   type: ContactType,
   raw: string,
   slot: CodeSlot,
 ) {
+  if (codeBusy.value[slot]) return;
   authError.value = "";
   bindError.value = "";
+  codeBusy.value[slot] = true;
   try {
     if (!validContact(type, raw))
       throw new Error(
@@ -310,8 +331,13 @@ function sendDemoCode(
           ? "请先输入正确的中国大陆手机号"
           : "请先输入正确的邮箱地址",
       );
-    const code = demoCodes.issue(purpose, type, normalizeContact(type, raw));
-    codeHints.value[slot] = `演示验证码：${code}（5 分钟有效；不会真实发送）`;
+    const contact = normalizeContact(type, raw);
+    const response = await sendCode(purpose, type, contact);
+    resendAt.value[`${purpose}:${type}:${contact}`] =
+      Date.now() + response.retryAfterSeconds * 1000;
+    codeHints.value[slot] = response.devCode
+      ? `本地开发验证码：${response.devCode}（${Math.ceil(response.expiresInSeconds / 60)} 分钟有效；不会真实发送）`
+      : "验证码已发送";
     codeTick.value = Date.now();
   } catch (error) {
     if (slot === "bind")
@@ -320,8 +346,32 @@ function sendDemoCode(
     else
       authError.value =
         error instanceof Error ? error.message : "无法获取验证码";
+  } finally {
+    codeBusy.value[slot] = false;
   }
 }
+function applyAccount(account: Account) {
+  data.value = load(account);
+  data.value.displayName = account.name;
+  data.value.handle = account.handle;
+  data.value.people[0]!.name = account.name;
+  data.value.people[0]!.handle = account.handle;
+  data.value.people[0]!.initials = account.name[0]!;
+  currentAccount.value = account;
+  nextTick(scrollBottom);
+}
+onMounted(async () => {
+  if (!sessionToken()) return;
+  try {
+    applyAccount(await currentUser());
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) clearSession();
+    authError.value =
+      error instanceof Error ? error.message : "无法恢复登录状态";
+  } finally {
+    authRestoring.value = false;
+  }
+});
 async function submitAuth() {
   if (authBusy.value) return;
   authError.value = "";
@@ -342,6 +392,13 @@ async function submitAuth() {
           password: authPassword.value,
         };
         const { name, handle, phone, email } = validateRegistration(input);
+        await checkRegistration({
+          name,
+          handle,
+          phone,
+          email,
+          password: input.password,
+        });
         pendingRegistration.value = {
           name,
           handle,
@@ -355,18 +412,11 @@ async function submitAuth() {
         return;
       }
       if (!pendingRegistration.value) throw new Error("请先填写注册资料");
-      const hadAccounts = accounts().length > 0;
-      const account = await registerAccount({
+      const account = await register({
         ...pendingRegistration.value,
         phoneCode: authPhoneCode.value,
         emailCode: authEmailCode.value,
       });
-      if (!hadAccounts) {
-        try {
-          const legacy = localStorage.getItem(key);
-          if (legacy) localStorage.setItem(accountStateKey(account.id), legacy);
-        } catch {}
-      }
       contactType.value = account.phone ? "phone" : "email";
       authIdentifier.value = account.phone || account.email || "";
       switchAuthMode("login");
@@ -375,29 +425,37 @@ async function submitAuth() {
     }
     if (!validContact(contactType.value, authIdentifier.value))
       throw new Error("请输入有效的手机号或邮箱");
+    if (authMode.value === "reset") {
+      if (!validPassword(authPassword.value))
+        throw new Error("密码需为 8–72 位，并包含字母和数字");
+      if (authPassword.value !== authConfirm.value)
+        throw new Error("两次输入的密码不一致");
+      if (!/^[0-9]{6}$/.test(authLoginCode.value))
+        throw new Error("请输入 6 位验证码");
+      await resetPassword(
+        contactType.value,
+        normalizeContact(contactType.value, authIdentifier.value),
+        authLoginCode.value,
+        authPassword.value,
+      );
+      switchAuthMode("login");
+      authSuccess.value = "密码已重设，请用新密码登录。其他设备需要重新登录。";
+      return;
+    }
     const account =
       loginMethod.value === "password"
-        ? await authenticateAccount(
+        ? await loginWithPassword(
             contactType.value,
-            authIdentifier.value,
+            normalizeContact(contactType.value, authIdentifier.value),
             authPassword.value,
           )
-        : authenticateWithCode(
+        : await loginWithCode(
             contactType.value,
-            authIdentifier.value,
+            normalizeContact(contactType.value, authIdentifier.value),
             authLoginCode.value,
           );
-    if (!account) throw new Error("账号或凭据不正确，请检查后重试");
-    data.value = load(account);
-    data.value.displayName = account.name;
-    data.value.handle = account.handle;
-    data.value.people[0]!.name = account.name;
-    data.value.people[0]!.handle = account.handle;
-    data.value.people[0]!.initials = account.name[0]!;
-    sessionStorage.setItem(sessionKey, account.id);
-    currentAccount.value = account;
+    applyAccount(account);
     authPassword.value = "";
-    nextTick(scrollBottom);
   } catch (error) {
     authError.value =
       error instanceof Error ? error.message : "操作失败，请稍后再试";
@@ -405,9 +463,17 @@ async function submitAuth() {
     authBusy.value = false;
   }
 }
-function signOut() {
+async function signOut() {
+  try {
+    await logout();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) clearSession();
+    else {
+      notify(error instanceof Error ? error.message : "退出失败，请稍后重试");
+      return;
+    }
+  }
   stopVoice();
-  sessionStorage.removeItem(sessionKey);
   currentAccount.value = null;
   authPassword.value = "";
   bindPassword.value = "";
@@ -425,9 +491,8 @@ async function bindContact() {
   try {
     const type = missingContact.value;
     const updated = await bindAccountContact(
-      currentAccount.value.id,
       type,
-      bindValue.value,
+      normalizeContact(type, bindValue.value),
       bindPassword.value,
       bindCode.value,
     );
@@ -436,9 +501,7 @@ async function bindContact() {
     bindPassword.value = "";
     bindCode.value = "";
     bindSuccess.value =
-      type === "phone"
-        ? "手机号已关联到此演示账号，可用于登录"
-        : "邮箱已关联到此演示账号，可用于登录";
+      type === "phone" ? "手机号已绑定，可用于登录" : "邮箱已绑定，可用于登录";
   } catch (error) {
     bindError.value = error instanceof Error ? error.message : "绑定失败";
   } finally {
@@ -686,7 +749,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-if="!loggedIn" class="auth-shell">
+  <div v-if="authRestoring" class="auth-loading" role="status">
+    正在恢复登录状态…
+  </div>
+  <div v-else-if="!loggedIn" class="auth-shell">
     <div class="auth-visual">
       <div class="brand light">
         <span class="brand-mark"><AppIcon name="sparkles" /></span> IM 助手
@@ -709,30 +775,34 @@ onBeforeUnmount(() => {
     </div>
     <div class="auth-form-wrap">
       <form class="auth-card" @submit.prevent="submitAuth">
-        <span class="eyebrow-chip">本地交互演示</span>
+        <span class="eyebrow-chip">账号已接入用户服务</span>
         <h2>
           {{
             authMode === "login"
               ? "欢迎回来"
-              : registerStep === "verify"
-                ? "验证联系方式"
-                : "创建你的账号"
+              : authMode === "reset"
+                ? "重设密码"
+                : registerStep === "verify"
+                  ? "验证联系方式"
+                  : "创建你的账号"
           }}
         </h2>
         <p>
           {{
             authMode === "login"
               ? "用已绑定的手机号或邮箱登录。"
-              : registerStep === "verify"
-                ? "确认验证码后，才会创建你的账号。"
-                : "先填写注册资料，下一步验证联系方式。"
+              : authMode === "reset"
+                ? "验证已绑定的手机号或邮箱，然后设置新密码。"
+                : registerStep === "verify"
+                  ? "确认验证码后，才会创建你的账号。"
+                  : "先填写注册资料，下一步验证联系方式。"
           }}
         </p>
         <div
-          v-if="authMode === 'login'"
+          v-if="authMode === 'login' || authMode === 'reset'"
           class="auth-tabs"
           role="group"
-          aria-label="登录方式"
+          aria-label="联系方式"
         >
           <button
             type="button"
@@ -813,7 +883,7 @@ onBeforeUnmount(() => {
           "
         >
           <p class="auth-contact-hint">
-            资料已检查。请验证以下每一项联系方式；返回修改资料会清除已获取的验证码。
+            资料已通过服务端检查。请验证以下每一项联系方式；如果修改联系方式，请重新获取验证码。
           </p>
           <template v-if="pendingRegistration.phone">
             <label for="auth-phone-code"
@@ -832,11 +902,12 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 :disabled="
+                  codeBusy.phone ||
                   waitSeconds('register', 'phone', pendingRegistration.phone) >
-                  0
+                    0
                 "
                 @click="
-                  sendDemoCode(
+                  requestCode(
                     'register',
                     'phone',
                     pendingRegistration.phone!,
@@ -872,11 +943,12 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 :disabled="
+                  codeBusy.email ||
                   waitSeconds('register', 'email', pendingRegistration.email) >
-                  0
+                    0
                 "
                 @click="
-                  sendDemoCode(
+                  requestCode(
                     'register',
                     'email',
                     pendingRegistration.email!,
@@ -896,11 +968,11 @@ onBeforeUnmount(() => {
             </p>
           </template>
         </template>
-        <label v-if="authMode === 'login'" for="auth-identifier">{{
+        <label v-if="authMode !== 'register'" for="auth-identifier">{{
           contactType === "phone" ? "手机号" : "邮箱地址"
         }}</label>
         <input
-          v-if="authMode === 'login'"
+          v-if="authMode !== 'register'"
           id="auth-identifier"
           v-model="authIdentifier"
           :type="contactType === 'phone' ? 'tel' : 'email'"
@@ -934,7 +1006,12 @@ onBeforeUnmount(() => {
             验证码登录
           </button>
         </div>
-        <template v-if="authMode === 'login' && loginMethod === 'code'">
+        <template
+          v-if="
+            authMode === 'reset' ||
+            (authMode === 'login' && loginMethod === 'code')
+          "
+        >
           <label for="auth-login-code">{{
             contactType === "phone" ? "手机验证码" : "邮箱验证码"
           }}</label>
@@ -950,14 +1027,30 @@ onBeforeUnmount(() => {
             />
             <button
               type="button"
-              :disabled="waitSeconds('login', contactType, authIdentifier) > 0"
+              :disabled="
+                codeBusy.login ||
+                waitSeconds(
+                  authMode === 'reset' ? 'reset' : 'login',
+                  contactType,
+                  authIdentifier,
+                ) > 0
+              "
               @click="
-                sendDemoCode('login', contactType, authIdentifier, 'login')
+                requestCode(
+                  authMode === 'reset' ? 'reset' : 'login',
+                  contactType,
+                  authIdentifier,
+                  'login',
+                )
               "
             >
               {{
-                waitSeconds("login", contactType, authIdentifier)
-                  ? `${waitSeconds("login", contactType, authIdentifier)} 秒`
+                waitSeconds(
+                  authMode === "reset" ? "reset" : "login",
+                  contactType,
+                  authIdentifier,
+                )
+                  ? `${waitSeconds(authMode === "reset" ? "reset" : "login", contactType, authIdentifier)} 秒`
                   : "获取验证码"
               }}
             </button>
@@ -968,14 +1061,16 @@ onBeforeUnmount(() => {
         </template>
         <label
           v-if="
+            authMode === 'reset' ||
             (authMode === 'register' && registerStep === 'details') ||
             (authMode === 'login' && loginMethod === 'password')
           "
           for="auth-password"
-          >密码</label
+          >{{ authMode === "reset" ? "新密码" : "密码" }}</label
         >
         <div
           v-if="
+            authMode === 'reset' ||
             (authMode === 'register' && registerStep === 'details') ||
             (authMode === 'login' && loginMethod === 'password')
           "
@@ -986,14 +1081,12 @@ onBeforeUnmount(() => {
             v-model="authPassword"
             :type="showPassword ? 'text' : 'password'"
             :autocomplete="
-              authMode === 'register' ? 'new-password' : 'current-password'
+              authMode !== 'login' ? 'new-password' : 'current-password'
             "
             :placeholder="
-              authMode === 'register'
-                ? '至少 8 位，包含字母和数字'
-                : '请输入密码'
+              authMode !== 'login' ? '至少 8 位，包含字母和数字' : '请输入密码'
             "
-            :minlength="authMode === 'register' ? 8 : undefined"
+            :minlength="authMode !== 'login' ? 8 : undefined"
             required
           />
           <button
@@ -1004,7 +1097,12 @@ onBeforeUnmount(() => {
             <AppIcon :name="showPassword ? 'eyeoff' : 'eye'" :size="17" />
           </button>
         </div>
-        <template v-if="authMode === 'register' && registerStep === 'details'">
+        <template
+          v-if="
+            authMode === 'reset' ||
+            (authMode === 'register' && registerStep === 'details')
+          "
+        >
           <label for="auth-confirm">确认密码</label>
           <input
             id="auth-confirm"
@@ -1027,11 +1125,29 @@ onBeforeUnmount(() => {
                 ? registerStep === "details"
                   ? "下一步 · 验证联系方式"
                   : "验证并创建账号"
-                : loginMethod === "code"
-                  ? "验证码登录"
-                  : "密码登录"
+                : authMode === "reset"
+                  ? "验证并重设密码"
+                  : loginMethod === "code"
+                    ? "验证码登录"
+                    : "密码登录"
           }}
           <AppIcon name="arrowRight" :size="17" />
+        </button>
+        <button
+          v-if="authMode === 'login' && loginMethod === 'password'"
+          class="auth-back"
+          type="button"
+          @click="switchAuthMode('reset')"
+        >
+          忘记密码？
+        </button>
+        <button
+          v-if="authMode === 'reset'"
+          class="auth-back"
+          type="button"
+          @click="switchAuthMode('login')"
+        >
+          返回登录
         </button>
         <button
           v-if="authMode === 'register' && registerStep === 'verify'"
@@ -1042,6 +1158,7 @@ onBeforeUnmount(() => {
           返回修改资料
         </button>
         <button
+          v-if="authMode !== 'reset'"
           class="auth-switch"
           type="button"
           @click="switchAuthMode(authMode === 'login' ? 'register' : 'login')"
@@ -1051,7 +1168,7 @@ onBeforeUnmount(() => {
           }}
         </button>
         <p class="auth-disclaimer">
-          演示验证码会显示在页面上，不发送短信或邮件；它不能验证联系方式归属。请用测试联系方式和密码，真实发送与校验需接入后端。
+          本地开发模式会显示后端生成的验证码，不发送短信或邮件。请使用测试联系方式与密码。
         </p>
       </form>
     </div>
@@ -1169,7 +1286,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <span class="demo-chip"
-            ><span class="status-dot" />本地演示 · 接口待接入</span
+            ><span class="status-dot" />账号已接入 · 聊天本地演示</span
           >
         </div>
       </aside>
@@ -1722,7 +1839,7 @@ onBeforeUnmount(() => {
         <div class="content-card">
           <div class="card-heading">
             <h2>个人资料</h2>
-            <span>本地演示资料</span>
+            <span>服务端账号资料</span>
           </div>
           <div class="profile-setting">
             <span class="avatar violet large">{{ data.displayName[0] }}</span>
@@ -1750,7 +1867,7 @@ onBeforeUnmount(() => {
             <strong
               >补绑{{ missingContact === "phone" ? "手机号" : "邮箱" }}</strong
             >
-            <p>确认当前密码后可在本机将另一种联系方式关联到此账号。</p>
+            <p>确认当前密码后，将另一种联系方式绑定到你的账号。</p>
             <label for="bind-value">{{
               missingContact === "phone" ? "手机号" : "邮箱地址"
             }}</label>
@@ -1780,8 +1897,11 @@ onBeforeUnmount(() => {
               />
               <button
                 type="button"
-                :disabled="waitSeconds('bind', missingContact, bindValue) > 0"
-                @click="sendDemoCode('bind', missingContact, bindValue, 'bind')"
+                :disabled="
+                  codeBusy.bind ||
+                  waitSeconds('bind', missingContact, bindValue) > 0
+                "
+                @click="requestCode('bind', missingContact, bindValue, 'bind')"
               >
                 {{
                   waitSeconds("bind", missingContact, bindValue)
@@ -1809,7 +1929,7 @@ onBeforeUnmount(() => {
               {{ bindBusy ? "处理中…" : "关联到当前账号" }}
             </button>
             <small
-              >演示验证码仅显示在页面上；正式绑定需由服务端发送并验证。</small
+              >本地开发模式由后端返回验证码；短信和邮件发送尚未接入。</small
             >
           </form>
           <p v-if="bindSuccess" class="success-text" role="status">
