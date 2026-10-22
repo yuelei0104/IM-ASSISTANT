@@ -19,10 +19,15 @@ public class ChatRealtimeConfig {
         container.setConnectionFactory(factory);
         container.addMessageListener((message, pattern) -> {
             String[] parts = new String(message.getBody(), StandardCharsets.UTF_8).split(":", -1);
-            if (parts.length != 3) return;
             try {
-                sockets.notifyMessage(Long.parseLong(parts[0]), Long.parseLong(parts[1]),
-                        Long.parseLong(parts[2]));
+                if (parts.length == 4 && "G".equals(parts[0])) {
+                    var recipients = java.util.Arrays.stream(parts[3].split(","))
+                            .filter(part -> !part.isEmpty()).map(Long::parseLong).toList();
+                    sockets.notifyGroup(Long.parseLong(parts[1]), Long.parseLong(parts[2]), recipients);
+                } else if (parts.length == 3) {
+                    sockets.notifyMessage(Long.parseLong(parts[0]), Long.parseLong(parts[1]),
+                            Long.parseLong(parts[2]));
+                }
             } catch (NumberFormatException ignored) { }
         }, new ChannelTopic(TOPIC));
         return container;

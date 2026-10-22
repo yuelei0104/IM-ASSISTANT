@@ -45,7 +45,10 @@ import {
 } from "./contactApi";
 import { connectChatSocket, listUnreadDirect, loadDirectMessages, markDirectRead, sendDirectMessage, type DirectMessage } from "./chatApi";
 import {
-  clock,
+  createGroupChat, inviteGroupMembers, listGroups, loadGroupMessages,
+  markGroupRead, sendGroupMessage, type GroupChat, type GroupMessage,
+} from "./groupApi";
+import {
   initialState,
   selfId,
   uid,
@@ -148,7 +151,7 @@ const missingContact = computed<ContactType | null>(() =>
       : null,
 );
 const page = ref<Page>("chat");
-const activeId = ref("product");
+const activeId = ref("");
 const search = ref("");
 const composer = ref("");
 const modal = ref<Modal>(null);
@@ -173,6 +176,15 @@ const requestsNextCursor = ref<number | null>(null);
 const knownPeers = ref<ContactProfile[]>([]);
 const loadingPeers = new Set<number>();
 const directMessages = ref<DirectMessage[]>([]);
+const serverGroups = ref<GroupChat[]>([]);
+const groupsNextCursor = ref<number | null>(null);
+const groupMessages = ref<GroupMessage[]>([]);
+const groupNextBeforeId = ref<number | null>(null);
+const groupBusy = ref(false);
+let groupsSeq = 0;
+const groupReadInFlight = new Set<number>();
+const groupLastRead = new Map<number, number>();
+let groupPendingSend: { groupId: number; text: string; clientMsgId: string } | null = null;
 const directUnread = ref<Record<number, number>>({});
 const lastMarkedRead = new Map<number, number>();
 const readInFlight = new Set<number>();
@@ -184,6 +196,7 @@ const chatError = ref("");
 const sending = ref(false);
 let chatSeq = 0;
 let pendingRealtimeRefresh = false;
+let pendingGroupRefresh = false;
 let chatSocket: ReturnType<typeof connectChatSocket> | null = null;
 let lastHealthyPoll = 0;
 let pendingSend: { peerId: number; text: string; clientMsgId: string } | null = null;
@@ -228,11 +241,14 @@ watch(activeId, () => {
   showOlder.value = false;
   stopVoice();
   directMessages.value = [];
+  groupMessages.value = [];
   nextBeforeId.value = null;
+  groupNextBeforeId.value = null;
   chatError.value = "";
   chatSeq++;
   chatBusy.value = false;
   if (directPeer(activeId.value)) void refreshDirectChat();
+  if (serverGroupId(activeId.value)) void refreshGroupChat();
   nextTick(scrollBottom);
 });
 watch(page, () => {
@@ -242,12 +258,26 @@ watch(page, () => {
   if (page.value === "contacts" || page.value === "requests")
     void refreshContacts();
   if (page.value === "chat" && directPeer(activeId.value)) void refreshDirectChat();
+  if (page.value === "chat" && serverGroupId(activeId.value)) void refreshGroupChat();
 });
 function directPeer(id: string): number | null {
   if (!/^server-user-[1-9]\d*$/.test(id)) return null;
   const peerId = Number(id.slice(12));
   return Number.isSafeInteger(peerId) ? peerId : null;
 }
+function serverGroupId(id: string): number | null {
+  if (!/^server-group-[1-9]\d*$/.test(id)) return null;
+  const groupId = Number(id.slice(13));
+  return Number.isSafeInteger(groupId) ? groupId : null;
+}
+const realGroups = computed<Conversation[]>(() =>
+  serverGroups.value.map((g) => ({
+    id: `server-group-${g.id}`, name: g.name, kind: "group",
+    memberIds: g.memberIds.map((id) => id === currentAccount.value?.id ? selfId : `user-${id}`),
+    ownerId: g.ownerId === currentAccount.value?.id ? selfId : `user-${g.ownerId}`,
+    unread: g.unreadCount, color: "teal", initials: g.name[0] || "群",
+  })),
+);
 const realConversations = computed<Conversation[]>(() =>
   knownPeers.value.map((p) => ({
     id: `server-user-${p.id}`,
@@ -259,7 +289,11 @@ const realConversations = computed<Conversation[]>(() =>
     initials: p.nickname[0] || "友",
   })),
 );
-const allConversations = computed(() => [...realConversations.value, ...data.value.conversations]);
+const allConversations = computed(() => [...realGroups.value, ...realConversations.value]);
+watch(allConversations, (items) => {
+  if (currentAccount.value && (!activeId.value || !items.some((c) => c.id === activeId.value)))
+    activeId.value = items[0]?.id || "";
+});
 const active = computed(() => allConversations.value.find((c) => c.id === activeId.value));
 const messages = computed<Message[]>(() =>
   directPeer(activeId.value)
@@ -271,16 +305,22 @@ const messages = computed<Message[]>(() =>
         time: new Date(m.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
         kind: "text" as const,
       }))
-    : data.value.messages.filter((m) => m.conversationId === activeId.value),
+    : serverGroupId(activeId.value)
+      ? groupMessages.value.map((m) => ({
+          id: `group-message-${m.id}`, conversationId: activeId.value,
+          senderId: m.senderId === currentAccount.value?.id ? selfId : `user-${m.senderId}`,
+          text: m.body,
+          time: new Date(m.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+          kind: "text" as const,
+        }))
+      : [],
 );
-const visibleMessages = computed(() =>
-  directPeer(activeId.value) || showOlder.value ? messages.value : messages.value.slice(-12),
-);
+const visibleMessages = computed(() => messages.value);
 const conversations = computed(() =>
   allConversations.value.filter(
     (c) =>
       c.name.toLowerCase().includes(search.value.toLowerCase()) ||
-      (directPeer(c.id) ? (c.id === activeId.value ? messages.value : []) : data.value.messages).some(
+      (c.id === activeId.value ? messages.value : []).some(
         (m) =>
           m.conversationId === c.id &&
           m.text.toLowerCase().includes(search.value.toLowerCase()),
@@ -341,15 +381,17 @@ function person(id: string): Person {
   return (
     friends.value.find((p) => p.id === id) ||
     data.value.people.find((p) => p.id === id) ||
-    data.value.people[0]!
+    (id === selfId ? data.value.people[0] : undefined) ||
+    { id, name: `用户 ${id.replace(/^user-/, "")}`, handle: "",
+      initials: "友", color: "violet", status: "offline", note: "" }
   );
 }
 function last(c: Conversation) {
-  if (directPeer(c.id)) {
+  if (directPeer(c.id) || serverGroupId(c.id)) {
     const lastMessage = c.id === activeId.value ? messages.value.at(-1) : undefined;
     return lastMessage;
   }
-  return data.value.messages.filter((m) => m.conversationId === c.id).at(-1);
+  return undefined;
 }
 function notify(s: string) {
   toast.value = s;
@@ -363,9 +405,7 @@ function scrollBottom() {
 function openChat(id: string, source?: string) {
   const wasActive = activeId.value === id;
   const previous = allConversations.value.find((x) => x.id === id);
-  const unreadMessages = data.value.messages.filter(
-    (m) => m.conversationId === id,
-  );
+  const unreadMessages = id === activeId.value ? messages.value : [];
   unreadMarker.value = previous?.unread
     ? unreadMessages.at(-previous.unread)?.id || ""
     : "";
@@ -373,8 +413,6 @@ function openChat(id: string, source?: string) {
   activeId.value = id;
   page.value = "chat";
   assistantOpen.value = false;
-  const c = allConversations.value.find((x) => x.id === id);
-  if (c && !directPeer(id)) c.unread = 0;
   if (source) {
     showOlder.value = true;
     focusId.value = source;
@@ -386,6 +424,7 @@ function openChat(id: string, source?: string) {
     setTimeout(() => (focusId.value = ""), 3000);
   } else nextTick(scrollBottom);
   if (directPeer(id) && wasActive && !chatBusy.value) void refreshDirectChat();
+  if (serverGroupId(id) && wasActive && !chatBusy.value) void refreshGroupChat();
 }
 function mergeDirect(incoming: DirectMessage[]) {
   const byId = new Map(directMessages.value.map((m) => [m.id, m]));
@@ -491,13 +530,120 @@ async function loadOlderDirect() {
     if (sequence === chatSeq) chatBusy.value = false;
   }
 }
-function onChatEvent() {
+async function refreshGroups() {
+  const accountId = currentAccount.value?.id;
+  if (!accountId) return;
+  const sequence = ++groupsSeq;
+  try {
+    const result = await listGroups();
+    if (sequence !== groupsSeq || currentAccount.value?.id !== accountId) return;
+    const byId = new Map(serverGroups.value.map((g) => [g.id, g]));
+    for (const group of result.items) byId.set(group.id, group);
+    serverGroups.value = [...byId.values()].sort((a, b) => b.id - a.id);
+    groupsNextCursor.value = result.nextBeforeId;
+    if (!activeId.value || !allConversations.value.some((c) => c.id === activeId.value))
+      activeId.value = allConversations.value[0]?.id || "";
+  } catch (error) {
+    if (sequence === groupsSeq && !serverGroups.value.length)
+      chatError.value = error instanceof Error ? error.message : "讨论室加载失败";
+  }
+}
+async function loadMoreGroups() {
+  const cursor = groupsNextCursor.value;
+  const accountId = currentAccount.value?.id;
+  if (!cursor || !accountId) return;
+  const sequence = ++groupsSeq;
+  try {
+    const result = await listGroups(cursor);
+    if (sequence !== groupsSeq || currentAccount.value?.id !== accountId) return;
+    const byId = new Map(serverGroups.value.map((g) => [g.id, g]));
+    for (const group of result.items) byId.set(group.id, group);
+    serverGroups.value = [...byId.values()];
+    groupsNextCursor.value = result.nextBeforeId;
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "讨论室加载失败");
+  }
+}
+function mergeGroup(incoming: GroupMessage[]) {
+  const byId = new Map(groupMessages.value.map((m) => [m.id, m]));
+  for (const message of incoming) byId.set(message.id, message);
+  groupMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
+}
+async function markVisibleGroupRead(groupId: number) {
+  const accountId = currentAccount.value?.id;
+  if (!accountId || document.hidden || page.value !== "chat" || serverGroupId(activeId.value) !== groupId
+      || groupReadInFlight.has(groupId)) return;
+  const last = groupMessages.value.at(-1)?.id;
+  if (!last || (groupLastRead.get(groupId) ?? 0) >= last) return;
+  groupReadInFlight.add(groupId);
+  try {
+    await markGroupRead(groupId, last);
+    if (currentAccount.value?.id !== accountId) return;
+    groupLastRead.set(groupId, last);
+    const group = serverGroups.value.find((g) => g.id === groupId);
+    if (group) group.unreadCount = 0;
+    void refreshGroups();
+  } catch {
+    // A later sync retries without clearing the count.
+  } finally {
+    groupReadInFlight.delete(groupId);
+  }
+}
+async function refreshGroupChat() {
+  const groupId = serverGroupId(activeId.value);
+  const accountId = currentAccount.value?.id;
+  if (!groupId || !accountId) return;
+  if (chatBusy.value) { pendingGroupRefresh = true; return; }
+  const sequence = ++chatSeq;
+  chatBusy.value = true;
+  try {
+    const result = await loadGroupMessages(groupId);
+    if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return;
+    if (!groupMessages.value.length) groupNextBeforeId.value = result.nextBeforeId;
+    mergeGroup(result.messages);
+    chatError.value = "";
+    await nextTick();
+    scrollBottom();
+    void markVisibleGroupRead(groupId);
+  } catch (error) {
+    if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "群消息加载失败";
+  } finally {
+    if (sequence === chatSeq) chatBusy.value = false;
+    if (pendingGroupRefresh && sequence === chatSeq) {
+      pendingGroupRefresh = false;
+      void refreshGroupChat();
+    }
+  }
+}
+async function loadOlderGroup() {
+  const groupId = serverGroupId(activeId.value);
+  const cursor = groupNextBeforeId.value;
+  const accountId = currentAccount.value?.id;
+  if (!groupId || !cursor || !accountId || chatBusy.value) return;
+  const sequence = ++chatSeq;
+  chatBusy.value = true;
+  try {
+    const result = await loadGroupMessages(groupId, cursor);
+    if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return;
+    mergeGroup(result.messages);
+    groupNextBeforeId.value = result.nextBeforeId;
+    chatError.value = "";
+  } catch (error) {
+    if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "加载历史失败";
+  } finally {
+    if (sequence === chatSeq) chatBusy.value = false;
+  }
+}
+function onChatEvent(kind?: "direct" | "group") {
   if (!currentAccount.value) return;
-  void refreshUnread();
-  if (page.value === "chat" && directPeer(activeId.value)) {
+  if (kind !== "group") void refreshUnread();
+  if (kind !== "direct") void refreshGroups();
+  if (kind !== "group" && page.value === "chat" && directPeer(activeId.value)) {
     if (chatBusy.value) pendingRealtimeRefresh = true;
     else void refreshDirectChat();
   }
+  if (kind !== "direct" && page.value === "chat" && serverGroupId(activeId.value))
+    void refreshGroupChat();
 }
 const chatPoll = setInterval(() => {
   if (!currentAccount.value || document.hidden) return;
@@ -579,6 +725,7 @@ async function requestCode(
 function applyAccount(account: Account) {
   chatSocket?.close();
   pendingRealtimeRefresh = false;
+  pendingGroupRefresh = false;
   chatSeq++;
   unreadSeq++;
   unreadBusy = false;
@@ -587,7 +734,14 @@ function applyAccount(account: Account) {
   readInFlight.clear();
   knownPeers.value = loadKnownPeers(account);
   directMessages.value = [];
-  activeId.value = "product";
+  groupMessages.value = [];
+  serverGroups.value = [];
+  groupsNextCursor.value = null;
+  groupLastRead.clear();
+  groupReadInFlight.clear();
+  groupPendingSend = null;
+  groupsSeq++;
+  activeId.value = "";
   data.value = load(account);
   data.value.displayName = account.name;
   data.value.handle = account.handle;
@@ -598,6 +752,7 @@ function applyAccount(account: Account) {
   page.value = "chat";
   void refreshContacts();
   void refreshUnread();
+  void refreshGroups();
   chatSocket = connectChatSocket(onChatEvent);
   nextTick(scrollBottom);
 }
@@ -792,6 +947,7 @@ async function signOut() {
   chatSocket?.close();
   chatSocket = null;
   pendingRealtimeRefresh = false;
+  pendingGroupRefresh = false;
   contactsSeq++;
   chatSeq++;
   unreadSeq++;
@@ -804,6 +960,13 @@ async function signOut() {
   requestsNextCursor.value = null;
   knownPeers.value = [];
   directMessages.value = [];
+  groupMessages.value = [];
+  serverGroups.value = [];
+  groupsNextCursor.value = null;
+  groupLastRead.clear();
+  groupReadInFlight.clear();
+  groupPendingSend = null;
+  groupsSeq++;
   contactRequests.value = [];
   currentAccount.value = null;
   page.value = "chat";
@@ -866,18 +1029,27 @@ async function send() {
     }
     return;
   }
-  data.value.messages.push({
-    id: uid("m"),
-    conversationId: activeId.value,
-    senderId: selfId,
-    text,
-    time: clock(),
-    kind: "text",
-    status: "local",
-  });
-  composer.value = "";
-  nextTick(scrollBottom);
-  notify("已保存在本地；接入消息接口后才能发送给其他人");
+  const groupId = serverGroupId(activeId.value);
+  if (!groupId) return;
+  const accountId = currentAccount.value?.id;
+  if (!accountId) return;
+  const clientMsgId = groupPendingSend?.groupId === groupId && groupPendingSend.text === text
+    ? groupPendingSend.clientMsgId : crypto.randomUUID();
+  groupPendingSend = { groupId, text, clientMsgId };
+  sending.value = true;
+  try {
+    const saved = await sendGroupMessage(groupId, clientMsgId, text);
+    if (currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return;
+    mergeGroup([saved]);
+    composer.value = "";
+    groupPendingSend = null;
+    chatError.value = "";
+    nextTick(scrollBottom);
+  } catch (error) {
+    chatError.value = error instanceof Error ? error.message : "发送失败，请重试";
+  } finally {
+    sending.value = false;
+  }
 }
 async function requestFriend() {
   if (friendBusy.value) return;
@@ -944,53 +1116,46 @@ function toggleInvite(id: string) {
     ? inviteIds.value.filter((x) => x !== id)
     : [...inviteIds.value, id];
 }
-function createGroup() {
+async function createGroup() {
   const name = groupName.value.trim();
-  if (!name || inviteIds.value.length > 20) return;
-  const c: Conversation = {
-    id: uid("group"),
-    name,
-    kind: "group",
-    memberIds: [selfId, ...inviteIds.value],
-    ownerId: selfId,
-    description: "把讨论变成可以落实的下一步。",
-    unread: 0,
-    color: "teal",
-    initials: name[0]!,
-  };
-  data.value.conversations.unshift(c);
-  data.value.messages.push({
-    id: uid("s"),
-    conversationId: c.id,
-    senderId: selfId,
-    text: "讨论室已创建。新成员只看到加入后的消息。",
-    time: clock(),
-    kind: "system",
-  });
-  modal.value = null;
-  openChat(c.id);
+  if (!name || inviteIds.value.length > 20 || groupBusy.value) return;
+  groupBusy.value = true;
+  try {
+    const created = await createGroupChat(name, inviteIds.value.map((id) => Number(id.slice(5))));
+    serverGroups.value = [created, ...serverGroups.value];
+    modal.value = null;
+    openChat(`server-group-${created.id}`);
+  } catch (error) {
+    friendError.value = error instanceof Error ? error.message : "建群失败";
+  } finally {
+    groupBusy.value = false;
+  }
 }
-function addMembers() {
+async function addMembers() {
+  const groupId = serverGroupId(activeId.value);
   if (
     !active.value ||
+    !groupId ||
     active.value.ownerId !== selfId ||
+    !inviteIds.value.length ||
     inviteIds.value.length > 20 ||
     active.value.memberIds.length + inviteIds.value.length > 50
   ) {
     notify("最多 50 人，每次邀请不超过 20 人");
     return;
   }
-  active.value.memberIds.push(...inviteIds.value);
-  data.value.messages.push({
-    id: uid("s"),
-    conversationId: activeId.value,
-    senderId: selfId,
-    text: `${inviteIds.value.map((id) => person(id).name).join("、")}加入了讨论室。`,
-    time: clock(),
-    kind: "system",
-  });
-  modal.value = null;
-  nextTick(scrollBottom);
+  if (groupBusy.value) return;
+  groupBusy.value = true;
+  try {
+    const updated = await inviteGroupMembers(groupId, inviteIds.value.map((id) => Number(id.slice(5))));
+    serverGroups.value = serverGroups.value.map((g) => g.id === groupId ? updated : g);
+    modal.value = null;
+    notify("邀请已发送，新成员可以查看加入后的消息");
+  } catch (error) {
+    friendError.value = error instanceof Error ? error.message : "邀请失败";
+  } finally {
+    groupBusy.value = false;
+  }
 }
 function openNotice(id: string) {
   const n = data.value.notices.find((n) => n.id === id);
@@ -1014,10 +1179,10 @@ function addTask() {
   notify("待办已创建");
 }
 function reset() {
-  if (!confirm("重置所有本地演示数据？")) return;
+  if (!confirm("重置本地待办、通知和偏好演示数据？")) return;
   data.value = initialState();
-  activeId.value = "product";
-  notify("演示数据已重置");
+  activeId.value = allConversations.value[0]?.id || "";
+  notify("本地演示数据已重置，服务端聊天记录不受影响");
 }
 function stopVoice() {
   if (recognition) {
@@ -1077,7 +1242,9 @@ function visibility() {
   if (document.hidden) stopVoice();
   else if (currentAccount.value) {
     void refreshUnread();
+    void refreshGroups();
     if (page.value === "chat" && directPeer(activeId.value)) void refreshDirectChat();
+    if (page.value === "chat" && serverGroupId(activeId.value)) void refreshGroupChat();
   }
 }
 document.addEventListener("visibilitychange", visibility);
@@ -1616,6 +1783,7 @@ onBeforeUnmount(() => {
               ></span
             >
           </button>
+          <button v-if="groupsNextCursor" class="load-more" @click="loadMoreGroups">加载更多讨论室</button>
           <div v-if="!conversations.length" class="empty-list">
             没有找到相关会话
           </div>
@@ -1631,7 +1799,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <span class="demo-chip"
-            ><span class="status-dot" />好友私聊已接入 · 讨论室演示</span
+            ><span class="status-dot" />好友私聊与讨论室已接入</span
           >
         </div>
       </aside>
@@ -1686,26 +1854,22 @@ onBeforeUnmount(() => {
         </header>
         <div class="chat-notice">
           <AppIcon name="shield" :size="15" />
-          {{ directPeer(activeId) ? "好友消息已保存；每 5 秒检查新消息。实时推送待接入。" : "此讨论室为本地演示；群聊、翻译与 AI 总结待接入后端。" }}
+          消息已保存；在线时实时推送，断线后自动补拉。翻译与 AI 总结仍在开发中。
         </div>
         <div ref="messageScroll" class="message-scroll">
           <div class="messages-inner">
-            <div v-if="chatError && directPeer(activeId)" class="error-text" role="alert">
+            <div v-if="chatError" class="error-text" role="alert">
               {{ chatError }}
-              <button class="text-button" type="button" :disabled="chatBusy" @click="refreshDirectChat">重试</button>
+              <button class="text-button" type="button" :disabled="chatBusy" @click="directPeer(activeId) ? refreshDirectChat() : refreshGroupChat()">重试</button>
             </div>
             <button v-if="directPeer(activeId) && nextBeforeId" class="load-more" :disabled="chatBusy" @click="loadOlderDirect">
               {{ chatBusy ? "加载中…" : "查看更早消息" }}
             </button>
-            <button
-              v-if="!directPeer(activeId) && !showOlder && messages.length > 12"
-              class="load-more"
-              @click="showOlder = true"
-            >
-              查看更早消息
+            <button v-if="serverGroupId(activeId) && groupNextBeforeId" class="load-more" :disabled="chatBusy" @click="loadOlderGroup">
+              {{ chatBusy ? "加载中…" : "查看更早消息" }}
             </button>
-            <p v-if="directPeer(activeId) && chatBusy && !messages.length" role="status">正在加载消息…</p>
-            <p v-if="directPeer(activeId) && !chatBusy && !chatError && !messages.length" class="empty-list">还没有消息，发一条开始聊天吧</p>
+            <p v-if="chatBusy && !messages.length" role="status">正在加载消息…</p>
+            <p v-if="!chatBusy && !chatError && !messages.length" class="empty-list">还没有消息，发一条开始聊天吧</p>
             <div class="day-divider"><span>今天 · 讨论继续</span></div>
             <template v-for="m in visibleMessages" :key="m.id"
               ><div v-if="unreadMarker === m.id" class="unread-divider">
@@ -1970,9 +2134,7 @@ onBeforeUnmount(() => {
           <div class="stat-card">
             <span>共同讨论室</span
             ><strong>{{
-              data.conversations
-                .filter((c) => c.kind === "group")
-                .length.toString()
+              realGroups.length.toString()
                 .padStart(2, "0")
             }}</strong
             ><small>和伙伴一起推进想法</small>
@@ -2408,7 +2570,7 @@ onBeforeUnmount(() => {
         <div class="content-card danger-card">
           <div>
             <strong>演示数据</strong>
-            <p>所有交互保存在此浏览器本地。</p>
+            <p>仅待办、通知和偏好保存在此浏览器本地；聊天记录保存在服务端。</p>
           </div>
           <button class="outline-button" @click="reset">重置演示数据</button>
         </div>
@@ -2615,6 +2777,7 @@ onBeforeUnmount(() => {
               maxlength="30"
               placeholder="例如：产品共创讨论室"
           /></template>
+          <p v-if="friendError" class="error-text" role="alert">{{ friendError }}</p>
           <div class="field-label">
             选择好友 <span>已选 {{ inviteIds.length }} 人</span>
           </div>
@@ -2645,10 +2808,13 @@ onBeforeUnmount(() => {
               好友都已在讨论室中
             </p>
           </div>
+          <button v-if="friendsNextCursor" class="text-button" type="button" :disabled="contactsBusy" @click="loadMoreFriends">
+            加载更多好友
+          </button>
           <button
             class="primary-button full modal-submit"
             :disabled="
-              modal === 'group' ? !groupName.trim() : !inviteIds.length
+              groupBusy || (modal === 'group' ? !groupName.trim() : !inviteIds.length)
             "
             @click="modal === 'group' ? createGroup() : addMembers()"
           >

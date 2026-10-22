@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -80,6 +81,11 @@ public class ChatSocketHandler extends TextWebSocketHandler {
     public void notifyMessage(long messageId, long senderId, long recipientId) {
         push(senderId, "MSG " + messageId + " " + senderId + " " + recipientId);
         push(recipientId, "MSG " + messageId + " " + senderId + " " + recipientId);
+    }
+
+    public void notifyGroup(long groupId, long messageId, List<Long> recipients) {
+        for (long userId : recipients)
+            push(userId, "GROUP " + groupId + " " + messageId);
     }
 
     private void push(long userId, String payload) {

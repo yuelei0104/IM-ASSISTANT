@@ -62,7 +62,7 @@ export function markDirectRead(peerId: number, lastReadMessageId: number) {
   return request<void>(`/${peerId}/read`, { lastReadMessageId });
 }
 
-export function connectChatSocket(onUpdate: () => void) {
+export function connectChatSocket(onUpdate: (kind?: "direct" | "group") => void) {
   let socket: WebSocket | null = null;
   let authenticated = false;
   let stopped = false;
@@ -92,7 +92,9 @@ export function connectChatSocket(onUpdate: () => void) {
         retry = 1000;
         onUpdate(); // Fetch after reconnect to fill any gap in Pub/Sub delivery.
       } else if (/^MSG \d+ \d+ \d+$/.test(event.data)) {
-        onUpdate();
+        onUpdate("direct");
+      } else if (/^GROUP \d+ \d+$/.test(event.data)) {
+        onUpdate("group");
       }
     };
     client.onclose = () => {

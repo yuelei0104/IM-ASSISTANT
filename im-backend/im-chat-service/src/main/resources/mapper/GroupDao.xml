@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.yuelei.imchat.dao.GroupDao">
+    <resultMap id="groupRow" type="com.yuelei.imchat.dao.GroupDao$GroupRow">
+        <constructor>
+            <idArg column="id" javaType="_long"/>
+            <arg column="name" javaType="java.lang.String"/>
+            <arg column="owner_id" javaType="_long"/>
+            <arg column="unread_count" javaType="_long"/>
+        </constructor>
+    </resultMap>
+    <resultMap id="membershipRow" type="com.yuelei.imchat.dao.GroupDao$Membership">
+        <constructor>
+            <arg column="joined_after_id" javaType="_long"/>
+            <arg column="last_read_id" javaType="_long"/>
+        </constructor>
+    </resultMap>
+    <resultMap id="groupMessage" type="com.yuelei.imchat.model.GroupMessage">
+        <constructor>
+            <idArg column="id" javaType="_long"/>
+            <arg column="group_id" javaType="_long"/>
+            <arg column="sender_id" javaType="_long"/>
+            <arg column="client_msg_id" javaType="java.lang.String"/>
+            <arg column="body" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.LocalDateTime"/>
+        </constructor>
+    </resultMap>
+    <insert id="insertGroup" parameterType="com.yuelei.imchat.dao.GroupDao$NewGroup"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO im_chat_group (name, owner_id) VALUES (#{name}, #{ownerId})
+    </insert>
+    <select id="group" resultMap="groupRow">
+        SELECT id, name, owner_id, 0 AS unread_count FROM im_chat_group WHERE id = #{groupId}
+    </select>
+    <select id="lockGroup" resultMap="groupRow">
+        SELECT id, name, owner_id, 0 AS unread_count FROM im_chat_group WHERE id = #{groupId} FOR UPDATE
+    </select>
+    <select id="groups" resultMap="groupRow">
+        SELECT g.id, g.name, g.owner_id,
+               (SELECT COUNT(*) FROM im_group_message m FORCE INDEX (idx_group_history)
+                WHERE m.group_id = g.id AND m.id &gt; GREATEST(gm.joined_after_id, gm.last_read_id)
+                  AND m.sender_id != #{userId}) AS unread_count
+        FROM im_group_member gm JOIN im_chat_group g ON g.id = gm.group_id
+        WHERE gm.user_id = #{userId}
+        <if test="beforeId != null">AND g.id &lt; #{beforeId}</if>
+        ORDER BY g.id DESC LIMIT #{limit}
+    </select>
+    <select id="memberIds" resultType="long">
+        SELECT user_id FROM im_group_member WHERE group_id = #{groupId} ORDER BY user_id
+    </select>
+    <select id="membership" resultMap="membershipRow">
+        SELECT joined_after_id, last_read_id FROM im_group_member
+        WHERE group_id = #{groupId} AND user_id = #{userId}
+    </select>
+    <insert id="addMember">
+        INSERT INTO im_group_member (group_id, user_id, joined_after_id, last_read_id)
+        VALUES (#{groupId}, #{userId}, #{cursor}, #{cursor})
+    </insert>
+    <select id="latestId" resultType="long">
+        SELECT COALESCE(MAX(id), 0) FROM im_group_message WHERE group_id = #{groupId}
+    </select>
+    <insert id="insertMessage">
+        INSERT INTO im_group_message (group_id, sender_id, client_msg_id, body)
+        VALUES (#{groupId}, #{senderId}, #{clientMsgId}, #{body})
+        ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
+    </insert>
+    <select id="byClientId" resultMap="groupMessage">
+        SELECT id, group_id, sender_id, client_msg_id, body, created_at
+        FROM im_group_message WHERE sender_id = #{senderId} AND client_msg_id = #{clientMsgId}
+    </select>
+    <select id="history" resultMap="groupMessage">
+        SELECT id, group_id, sender_id, client_msg_id, body, created_at
+        FROM im_group_message FORCE INDEX (idx_group_history)
+        WHERE group_id = #{groupId} AND id &gt; #{joinedAfterId}
+        <if test="beforeId != null">AND id &lt; #{beforeId}</if>
+        ORDER BY id DESC LIMIT #{limit}
+    </select>
+    <select id="validMessage" resultType="long">
+        SELECT id FROM im_group_message
+        WHERE group_id = #{groupId} AND id = #{messageId} AND id &gt; #{joinedAfterId}
+    </select>
+    <update id="markRead">
+        UPDATE im_group_member SET last_read_id = GREATEST(last_read_id, #{messageId})
+        WHERE group_id = #{groupId} AND user_id = #{userId}
+    </update>
+</mapper>

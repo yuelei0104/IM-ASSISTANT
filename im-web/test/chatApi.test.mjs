@@ -40,8 +40,9 @@ test("socket authenticates without URL token and refreshes after a notification"
   assert.deepEqual(opened.sent, ["AUTH alice-token"]);
   opened.onmessage({ data: "READY" });
   opened.onmessage({ data: "MSG 42 2 1" });
+  opened.onmessage({ data: "GROUP 7 42" });
   assert.equal(connection.connected(), true);
-  assert.equal(updates, 2);
+  assert.equal(updates, 3);
   connection.close();
   assert.equal(connection.connected(), false);
 });
