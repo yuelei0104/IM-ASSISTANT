@@ -34,6 +34,16 @@ import {
   type RegistrationInput,
 } from "./authValidation";
 import {
+  deleteFriend,
+  findUser,
+  inviteFriend,
+  listFriends,
+  listRequests,
+  resolveFriendRequest,
+  type ContactProfile,
+  type ContactRequest,
+} from "./contactApi";
+import {
   clock,
   initialState,
   selfId,
@@ -141,6 +151,14 @@ const groupName = ref("");
 const inviteIds = ref<string[]>([]);
 const friendHandle = ref("");
 const friendNote = ref("");
+const friendError = ref("");
+const friendBusy = ref(false);
+const foundProfile = ref<ContactProfile | null>(null);
+const contactProfiles = ref<ContactProfile[]>([]);
+const contactRequests = ref<ContactRequest[]>([]);
+const contactsBusy = ref(false);
+const contactsError = ref("");
+let contactsSeq = 0;
 const showOlder = ref(false);
 const focusId = ref("");
 const messageScroll = ref<HTMLElement | null>(null);
@@ -179,6 +197,8 @@ watch(page, () => {
   stopVoice();
   infoOpen.value = false;
   if (page.value !== "chat") mobileChatOpen.value = false;
+  if (page.value === "contacts" || page.value === "requests")
+    void refreshContacts();
 });
 const active = computed(() =>
   data.value.conversations.find((c) => c.id === activeId.value),
@@ -200,14 +220,22 @@ const conversations = computed(() =>
       ),
   ),
 );
-const friends = computed(() =>
-  data.value.people.filter((p) => data.value.friendIds.includes(p.id)),
+const friends = computed<Person[]>(() =>
+  contactProfiles.value.map((p) => ({
+    id: `user-${p.id}`,
+    name: p.nickname,
+    handle: p.handle,
+    initials: p.nickname[0] || "友",
+    color: "violet",
+    status: "offline",
+    note: "已建立好友关系",
+  })),
 );
 const received = computed(() =>
-  data.value.requests.filter((r) => r.toId === selfId),
+  contactRequests.value.filter((r) => r.toId === currentAccount.value?.id),
 );
 const sent = computed(() =>
-  data.value.requests.filter((r) => r.fromId === selfId),
+  contactRequests.value.filter((r) => r.fromId === currentAccount.value?.id),
 );
 const unread = computed(() => data.value.notices.filter((n) => !n.read).length);
 const openTasks = computed(
@@ -241,7 +269,11 @@ const summarySources = computed(() =>
     .slice(-3),
 );
 function person(id: string): Person {
-  return data.value.people.find((p) => p.id === id) || data.value.people[0]!;
+  return (
+    friends.value.find((p) => p.id === id) ||
+    data.value.people.find((p) => p.id === id) ||
+    data.value.people[0]!
+  );
 }
 function last(c: Conversation) {
   return data.value.messages.filter((m) => m.conversationId === c.id).at(-1);
@@ -358,7 +390,39 @@ function applyAccount(account: Account) {
   data.value.people[0]!.handle = account.handle;
   data.value.people[0]!.initials = account.name[0]!;
   currentAccount.value = account;
+  page.value = "chat";
+  void refreshContacts();
   nextTick(scrollBottom);
+}
+async function refreshContacts() {
+  const accountId = currentAccount.value?.id;
+  if (!accountId) return;
+  const sequence = ++contactsSeq;
+  contactsBusy.value = true;
+  contactsError.value = "";
+  try {
+    const [profiles, requests] = await Promise.all([
+      listFriends(),
+      listRequests(),
+    ]);
+    if (sequence !== contactsSeq || currentAccount.value?.id !== accountId)
+      return;
+    contactProfiles.value = profiles;
+    contactRequests.value = requests;
+  } catch (error) {
+    if (sequence !== contactsSeq || currentAccount.value?.id !== accountId)
+      return;
+    if (error instanceof ApiError && error.status === 401) {
+      clearSession();
+      currentAccount.value = null;
+      authError.value = "登录已过期，请重新登录";
+    } else {
+      contactsError.value =
+        error instanceof Error ? error.message : "无法加载好友";
+    }
+  } finally {
+    if (sequence === contactsSeq) contactsBusy.value = false;
+  }
 }
 onMounted(async () => {
   if (!sessionToken()) return;
@@ -474,7 +538,11 @@ async function signOut() {
     }
   }
   stopVoice();
+  contactsSeq++;
+  contactProfiles.value = [];
+  contactRequests.value = [];
   currentAccount.value = null;
+  page.value = "chat";
   authPassword.value = "";
   bindPassword.value = "";
   bindCode.value = "";
@@ -524,82 +592,76 @@ function send() {
   nextTick(scrollBottom);
   notify("已保存在本地；接入消息接口后才能发送给其他人");
 }
-function startDirect(p: Person) {
-  if (!data.value.friendIds.includes(p.id)) return;
-  let c = data.value.conversations.find(
-    (c) => c.kind === "direct" && c.memberIds.includes(p.id),
-  );
-  if (!c) {
-    c = {
-      id: uid("dm"),
-      name: p.name,
-      kind: "direct",
-      memberIds: [selfId, p.id],
-      unread: 0,
-      color: p.color,
-      initials: p.initials,
-    };
-    data.value.conversations.unshift(c);
-  }
-  openChat(c.id);
-}
-function requestFriend() {
+async function searchFriend() {
   const handle = friendHandle.value.trim().replace(/^@/, "").toLowerCase();
-  const p = data.value.people.find(
-    (p) => p.id !== selfId && p.handle.toLowerCase() === handle,
-  );
-  if (!p) {
-    notify("未找到该账号；演示可搜索 @heyutong");
+  friendError.value = "";
+  foundProfile.value = null;
+  if (!/^[a-z0-9_]{3,20}$/.test(handle)) {
+    friendError.value = "请输入 3–20 位字母、数字或下划线账号";
     return;
   }
-  if (data.value.friendIds.includes(p.id)) {
-    notify("你们已经是好友");
-    return;
+  friendBusy.value = true;
+  try {
+    const profile = await findUser(handle);
+    if (friendHandle.value.trim().replace(/^@/, "").toLowerCase() !== handle)
+      return;
+    if (profile.id === currentAccount.value?.id)
+      throw new Error("不能添加自己为好友");
+    if (contactProfiles.value.some((p) => p.id === profile.id))
+      throw new Error("你们已经是好友");
+    foundProfile.value = profile;
+  } catch (error) {
+    friendError.value = error instanceof Error ? error.message : "查找失败";
+  } finally {
+    friendBusy.value = false;
   }
-  if (
-    data.value.requests.some(
-      (r) =>
-        r.state === "pending" &&
-        ((r.fromId === selfId && r.toId === p.id) ||
-          (r.toId === selfId && r.fromId === p.id)),
-    )
-  ) {
-    notify("已有待处理的申请");
-    return;
-  }
-  data.value.requests.unshift({
-    id: uid("r"),
-    fromId: selfId,
-    toId: p.id,
-    note: friendNote.value.trim() || "你好，想加你为好友。",
-    time: clock(),
-    state: "pending",
-  });
-  modal.value = null;
-  page.value = "requests";
-  notify("申请已保存在本地演示");
 }
-function resolveRequest(
-  id: string,
-  action: "accepted" | "rejected" | "withdrawn",
+async function requestFriend() {
+  if (!foundProfile.value || friendBusy.value) return;
+  friendBusy.value = true;
+  friendError.value = "";
+  try {
+    await inviteFriend(foundProfile.value.handle, friendNote.value.trim());
+    modal.value = null;
+    page.value = "requests";
+    await refreshContacts();
+    notify("好友申请已发送");
+  } catch (error) {
+    friendError.value = error instanceof Error ? error.message : "发送失败";
+  } finally {
+    friendBusy.value = false;
+  }
+}
+async function resolveRequest(
+  id: number,
+  action: "accept" | "reject" | "withdraw",
 ) {
-  const r = data.value.requests.find((r) => r.id === id);
-  if (!r || r.state !== "pending") return;
-  r.state = action;
-  if (action === "accepted" && !data.value.friendIds.includes(r.fromId))
-    data.value.friendIds.push(r.fromId);
-  notify("申请状态已更新");
+  try {
+    await resolveFriendRequest(id, action);
+    await refreshContacts();
+    notify("申请状态已更新");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "处理失败");
+    await refreshContacts();
+  }
 }
-function removeFriend(p: Person) {
+async function removeFriend(p: Person) {
   if (!confirm(`移除 ${p.name}？过往私聊仍可查看。`)) return;
-  data.value.friendIds = data.value.friendIds.filter((id) => id !== p.id);
-  notify("已移除好友；私聊历史仍可查看");
+  try {
+    await deleteFriend(Number(p.id.slice(5)));
+    await refreshContacts();
+    notify("已移除好友");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "移除失败");
+  }
 }
 function openModal(m: Modal) {
   modal.value = m;
   inviteIds.value = [];
   friendHandle.value = "";
   friendNote.value = "";
+  friendError.value = "";
+  foundProfile.value = null;
   groupName.value = "";
 }
 function toggleInvite(id: string) {
@@ -1195,7 +1257,7 @@ onBeforeUnmount(() => {
           <AppIcon :name="n.icon" :size="21" /><span
             v-if="
               (n.id === 'requests' &&
-                received.some((r) => r.state === 'pending')) ||
+                received.some((r) => r.state === 'PENDING')) ||
               (n.id === 'notices' && unread)
             "
             class="rail-dot"
@@ -1603,11 +1665,15 @@ onBeforeUnmount(() => {
         </button>
       </header>
       <div v-if="page === 'contacts'" class="page-content">
+        <p v-if="contactsError" class="error-text" role="alert">
+          {{ contactsError }}
+        </p>
+        <p v-if="contactsBusy" role="status">正在加载好友…</p>
         <div class="stat-row">
           <div class="stat-card">
             <span>我的好友</span
             ><strong>{{ friends.length.toString().padStart(2, "0") }}</strong
-            ><small>随时可以开始聊天</small>
+            ><small>好友关系已同步</small>
           </div>
           <div class="stat-card">
             <span>共同讨论室</span
@@ -1624,16 +1690,23 @@ onBeforeUnmount(() => {
           <div class="card-heading">
             <h2>好友列表</h2>
             <span>{{ friends.length }} 位好友</span>
+            <button
+              class="text-button"
+              type="button"
+              :disabled="contactsBusy"
+              @click="refreshContacts"
+            >
+              刷新
+            </button>
           </div>
           <div v-for="p in friends" :key="p.id" class="person-row">
             <span :class="['avatar', p.color]">{{ p.initials }}</span>
             <div class="person-detail">
-              <strong
-                >{{ p.name }} <span :class="['presence', p.status]" /></strong
+              <strong>{{ p.name }}</strong
               ><span>@{{ p.handle }} · {{ p.note }}</span>
             </div>
-            <button class="outline-button" @click="startDirect(p)">
-              <AppIcon name="message" :size="15" /> 发消息</button
+            <button class="outline-button" disabled title="消息服务尚未接入">
+              <AppIcon name="message" :size="15" /> 消息接入中</button
             ><button
               class="icon-button subdued"
               :aria-label="`移除好友 ${p.name}`"
@@ -1642,53 +1715,67 @@ onBeforeUnmount(() => {
               <AppIcon name="userMinus" :size="17" />
             </button>
           </div>
+          <div v-if="!friends.length && !contactsBusy" class="empty-state">
+            还没有好友，试试通过唯一账号添加。
+          </div>
         </div>
       </div>
       <div v-if="page === 'requests'" class="page-content">
+        <p v-if="contactsError" class="error-text" role="alert">
+          {{ contactsError }}
+        </p>
+        <p v-if="contactsBusy" role="status">正在加载申请…</p>
         <div class="content-card">
           <div class="card-heading">
             <h2>收到的申请</h2>
             <span
               >{{
-                received.filter((r) => r.state === "pending").length
+                received.filter((r) => r.state === "PENDING").length
               }}
               条待处理</span
             >
+            <button
+              class="text-button"
+              type="button"
+              :disabled="contactsBusy"
+              @click="refreshContacts"
+            >
+              刷新
+            </button>
           </div>
-          <div v-if="!received.length" class="empty-state">
+          <div v-if="!received.length && !contactsBusy" class="empty-state">
             <AppIcon name="inbox" :size="26" /><strong>暂时没有新申请</strong>
             <p>新的好友邀请会出现在这里。</p>
           </div>
           <div v-for="r in received" :key="r.id" class="request-row">
-            <span :class="['avatar', person(r.fromId).color]">{{
-              person(r.fromId).initials
-            }}</span>
+            <span class="avatar violet">{{ r.peerNickname[0] }}</span>
             <div class="request-body">
               <strong
-                >{{ person(r.fromId).name }}
-                <span>@{{ person(r.fromId).handle }}</span></strong
+                >{{ r.peerNickname }} <span>@{{ r.peerHandle }}</span></strong
               >
               <p>{{ r.note }}</p>
               <small
-                >{{ r.time }} ·
+                >{{ new Date(r.createdAt).toLocaleString("zh-CN") }} ·
                 {{
-                  r.state === "pending"
+                  r.state === "PENDING"
                     ? "等待你处理"
-                    : r.state === "accepted"
+                    : r.state === "ACCEPTED"
                       ? "已同意"
-                      : "已拒绝"
+                      : r.state === "REJECTED"
+                        ? "已拒绝"
+                        : "已撤回"
                 }}</small
               >
             </div>
-            <div v-if="r.state === 'pending'" class="row-actions">
+            <div v-if="r.state === 'PENDING'" class="row-actions">
               <button
                 class="outline-button"
-                @click="resolveRequest(r.id, 'rejected')"
+                @click="resolveRequest(r.id, 'reject')"
               >
                 拒绝</button
               ><button
                 class="primary-button compact"
-                @click="resolveRequest(r.id, 'accepted')"
+                @click="resolveRequest(r.id, 'accept')"
               >
                 同意
               </button>
@@ -1700,33 +1787,38 @@ onBeforeUnmount(() => {
             <h2>我发出的申请</h2>
             <span
               >{{
-                sent.filter((r) => r.state === "pending").length
+                sent.filter((r) => r.state === "PENDING").length
               }}
               条待回应</span
             >
           </div>
-          <div v-if="!sent.length" class="empty-state mini">
+          <div v-if="!sent.length && !contactsBusy" class="empty-state mini">
             还没有发出的申请。通过唯一账号搜索新朋友吧。
           </div>
           <div v-for="r in sent" :key="r.id" class="request-row">
-            <span :class="['avatar', person(r.toId).color]">{{
-              person(r.toId).initials
-            }}</span>
+            <span class="avatar violet">{{ r.peerNickname[0] }}</span>
             <div class="request-body">
               <strong
-                >{{ person(r.toId).name }}
-                <span>@{{ person(r.toId).handle }}</span></strong
+                >{{ r.peerNickname }} <span>@{{ r.peerHandle }}</span></strong
               >
               <p>{{ r.note }}</p>
               <small
-                >{{ r.time }} ·
-                {{ r.state === "pending" ? "等待回应" : "已撤回" }}</small
+                >{{ new Date(r.createdAt).toLocaleString("zh-CN") }} ·
+                {{
+                  r.state === "PENDING"
+                    ? "等待回应"
+                    : r.state === "ACCEPTED"
+                      ? "已同意"
+                      : r.state === "REJECTED"
+                        ? "已拒绝"
+                        : "已撤回"
+                }}</small
               >
             </div>
             <button
-              v-if="r.state === 'pending'"
+              v-if="r.state === 'PENDING'"
               class="text-button"
-              @click="resolveRequest(r.id, 'withdrawn')"
+              @click="resolveRequest(r.id, 'withdraw')"
             >
               撤回
             </button>
@@ -2139,7 +2231,7 @@ onBeforeUnmount(() => {
         </div>
         <template v-if="modal === 'friend'"
           ><p class="modal-lead">
-            通过唯一账号找到伙伴。演示可尝试 @heyutong。
+            输入对方注册时设置的唯一账号，查找后发送申请。
           </p>
           <label class="field-label" for="friend-handle">对方账号</label>
           <div class="input-prefix">
@@ -2148,9 +2240,27 @@ onBeforeUnmount(() => {
               id="friend-handle"
               v-model="friendHandle"
               placeholder="输入唯一账号"
-              @keydown.enter="requestFriend"
+              @input="
+                foundProfile = null;
+                friendError = '';
+              "
+              @keydown.enter.prevent="searchFriend"
             />
           </div>
+          <button
+            class="outline-button"
+            type="button"
+            :disabled="friendBusy || !friendHandle.trim()"
+            @click="searchFriend"
+          >
+            {{ friendBusy ? "查询中…" : "查找账号" }}
+          </button>
+          <p v-if="foundProfile" class="success-text" role="status">
+            找到 {{ foundProfile.nickname }} · @{{ foundProfile.handle }}
+          </p>
+          <p v-if="friendError" class="error-text" role="alert">
+            {{ friendError }}
+          </p>
           <label class="field-label" for="friend-note"
             >打个招呼 <span>选填</span></label
           ><textarea
@@ -2161,7 +2271,7 @@ onBeforeUnmount(() => {
             placeholder="介绍一下自己吧…"
           /><button
             class="primary-button full modal-submit"
-            :disabled="!friendHandle.trim()"
+            :disabled="!foundProfile || friendBusy"
             @click="requestFriend"
           >
             发送好友申请

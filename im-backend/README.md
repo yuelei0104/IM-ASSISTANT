@@ -74,6 +74,18 @@ sessions, including those on other devices, expire after the reset. In local
 development the reset code is shown in the UI; production requires an actual
 SMS/email provider before this flow can be enabled.
 
-The Vue app connects registration, login, password recovery and contact
-binding to this service. Conversations and contacts in the main UI remain
-local demonstration data. Stop the service with Ctrl+C in its terminal.
+Flyway also creates `im_friend_request` and `im_friendship` with migration V2.
+The `Authorization: Bearer <token>` header is required for the following
+`/api/contacts` endpoints:
+
+- `GET /users/{handle}` looks up a public profile by exact handle.
+- `GET /` lists friends; `GET /requests` lists up to 100 recent or pending requests.
+- `POST /requests` accepts `{ "handle": "other_user", "note": "你好" }`.
+- `POST /requests/{id}/accept`, `/reject`, `/withdraw` handle a pending request.
+- `DELETE /{friendId}` removes an established friendship.
+
+Only the recipient may accept or reject; only the sender may withdraw. The
+database prevents two simultaneous pending requests for the same pair, even
+when both users send at once. The Vue app uses these APIs for the contacts and
+friend requests screens. Conversations still use local demonstration data.
+Stop the service with Ctrl+C in its terminal.

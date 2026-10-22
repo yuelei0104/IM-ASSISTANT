@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.yuelei.imbackend.dao.ContactDao">
+    <resultMap id="contact" type="com.yuelei.imbackend.model.ContactProfile">
+        <constructor>
+            <idArg column="id" javaType="_long"/>
+            <arg column="nickname" javaType="java.lang.String"/>
+            <arg column="handle" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="requestRow" type="com.yuelei.imbackend.model.FriendRequestRow">
+        <constructor>
+            <idArg column="id" javaType="_long"/>
+            <arg column="from_user_id" javaType="_long"/>
+            <arg column="to_user_id" javaType="_long"/>
+            <arg column="status" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="requestView" type="com.yuelei.imbackend.model.FriendRequestView">
+        <constructor>
+            <idArg column="id" javaType="_long"/>
+            <arg column="from_user_id" javaType="_long"/>
+            <arg column="to_user_id" javaType="_long"/>
+            <arg column="peer_id" javaType="_long"/>
+            <arg column="peer_nickname" javaType="java.lang.String"/>
+            <arg column="peer_handle" javaType="java.lang.String"/>
+            <arg column="note" javaType="java.lang.String"/>
+            <arg column="status" javaType="java.lang.String"/>
+            <arg column="created_at" javaType="java.time.LocalDateTime"/>
+        </constructor>
+    </resultMap>
+
+    <select id="friends" resultMap="contact">
+        SELECT u.id, u.nickname, u.handle
+        FROM im_friendship f
+        JOIN im_user u ON u.id = CASE WHEN f.user_low_id = #{userId}
+            THEN f.user_high_id ELSE f.user_low_id END
+        WHERE f.user_low_id = #{userId} OR f.user_high_id = #{userId}
+        ORDER BY u.handle
+    </select>
+
+    <select id="requests" resultMap="requestView">
+        SELECT r.id, r.from_user_id, r.to_user_id, p.id AS peer_id,
+               p.nickname AS peer_nickname, p.handle AS peer_handle,
+               r.note, r.status, r.created_at
+        FROM im_friend_request r
+        JOIN im_user p ON p.id = CASE WHEN r.from_user_id = #{userId}
+            THEN r.to_user_id ELSE r.from_user_id END
+        WHERE r.from_user_id = #{userId} OR r.to_user_id = #{userId}
+        ORDER BY CASE WHEN r.status = 'PENDING' THEN 0 ELSE 1 END, r.id DESC
+        LIMIT 100
+    </select>
+
+    <select id="requestForUpdate" resultMap="requestRow">
+        SELECT id, from_user_id, to_user_id, status
+        FROM im_friend_request WHERE id = #{id} FOR UPDATE
+    </select>
+
+    <select id="friendshipCount" resultType="long">
+        SELECT COUNT(*) FROM im_friendship WHERE user_low_id = #{low} AND user_high_id = #{high}
+    </select>
+
+    <insert id="invite">
+        INSERT INTO im_friend_request (from_user_id, to_user_id, note)
+        VALUES (#{fromId}, #{toId}, #{note})
+    </insert>
+
+    <update id="updateRequest">
+        UPDATE im_friend_request SET status = #{state}, resolved_at = CURRENT_TIMESTAMP
+        WHERE id = #{id} AND status = 'PENDING'
+    </update>
+
+    <insert id="addFriendship">
+        INSERT IGNORE INTO im_friendship (user_low_id, user_high_id) VALUES (#{low}, #{high})
+    </insert>
+
+    <delete id="removeFriendship">
+        DELETE FROM im_friendship WHERE user_low_id = #{low} AND user_high_id = #{high}
+    </delete>
+</mapper>

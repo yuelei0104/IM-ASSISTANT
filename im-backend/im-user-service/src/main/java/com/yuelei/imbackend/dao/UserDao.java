@@ -13,6 +13,8 @@ public interface UserDao {
 
     UserAccount byId(@Param("id") long id);
 
+    UserAccount byHandle(@Param("handle") String handle);
+
     long countByHandle(@Param("handle") String handle);
 
     long countByPhone(@Param("phone") String phone);

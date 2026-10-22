@@ -19,8 +19,8 @@ public class AuthConfig {
         return new WebMvcConfigurer() {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
-                registry.addMapping("/api/auth/**").allowedOrigins("http://localhost:5173")
-                        .allowedMethods("GET", "POST").allowedHeaders("Authorization", "Content-Type");
+                registry.addMapping("/api/**").allowedOrigins("http://localhost:5173")
+                        .allowedMethods("GET", "POST", "DELETE").allowedHeaders("Authorization", "Content-Type");
             }
         };
     }

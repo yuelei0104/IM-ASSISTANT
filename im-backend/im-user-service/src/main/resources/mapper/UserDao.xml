@@ -27,6 +27,10 @@
         SELECT <include refid="columns"/> FROM im_user WHERE id = #{id}
     </select>
 
+    <select id="byHandle" resultMap="userAccount">
+        SELECT <include refid="columns"/> FROM im_user WHERE handle = #{handle}
+    </select>
+
     <select id="countByHandle" resultType="long">
         SELECT COUNT(*) FROM im_user WHERE handle = #{handle}
     </select>
