@@ -61,3 +61,63 @@ export function listUnreadDirect() {
 export function markDirectRead(peerId: number, lastReadMessageId: number) {
   return request<void>(`/${peerId}/read`, { lastReadMessageId });
 }
+
+export function connectChatSocket(onUpdate: () => void) {
+  let socket: WebSocket | null = null;
+  let authenticated = false;
+  let stopped = false;
+  let retry = 1000;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let reauthTimer: ReturnType<typeof setInterval> | null = null;
+
+  function open() {
+    if (stopped || !sessionToken()) return;
+    const url = new URL(`${apiBase}/chats/ws`, window.location.href);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    const client = new WebSocket(url);
+    socket = client;
+    client.onopen = () => {
+      const token = sessionToken();
+      if (!token) { client.close(); return; }
+      client.send(`AUTH ${token}`);
+      reauthTimer = setInterval(() => {
+        const current = sessionToken();
+        if (!current) client.close();
+        else if (client.readyState === WebSocket.OPEN) client.send(`AUTH ${current}`);
+      }, 5 * 60_000);
+    };
+    client.onmessage = (event) => {
+      if (event.data === "READY") {
+        authenticated = true;
+        retry = 1000;
+        onUpdate(); // Fetch after reconnect to fill any gap in Pub/Sub delivery.
+      } else if (/^MSG \d+ \d+ \d+$/.test(event.data)) {
+        onUpdate();
+      }
+    };
+    client.onclose = () => {
+      if (socket !== client) return;
+      socket = null;
+      authenticated = false;
+      if (reauthTimer) clearInterval(reauthTimer);
+      reauthTimer = null;
+      if (stopped || !sessionToken()) return;
+      retryTimer = setTimeout(open, retry + Math.floor(Math.random() * 250));
+      retry = Math.min(30_000, retry * 2);
+    };
+    client.onerror = () => client.close();
+  }
+
+  open();
+  return {
+    connected: () => authenticated,
+    close: () => {
+      stopped = true;
+      authenticated = false;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (reauthTimer) clearInterval(reauthTimer);
+      socket?.close();
+      socket = null;
+    },
+  };
+}

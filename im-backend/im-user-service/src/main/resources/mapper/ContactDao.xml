@@ -38,8 +38,9 @@
         FROM im_friendship f
         JOIN im_user u ON u.id = CASE WHEN f.user_low_id = #{userId}
             THEN f.user_high_id ELSE f.user_low_id END
-        WHERE f.user_low_id = #{userId} OR f.user_high_id = #{userId}
-        ORDER BY u.handle
+        WHERE (f.user_low_id = #{userId} OR f.user_high_id = #{userId}) AND u.id &gt; #{afterId}
+        ORDER BY u.id
+        LIMIT #{limit}
     </select>
 
     <select id="requests" resultMap="requestView">
@@ -49,9 +50,9 @@
         FROM im_friend_request r
         JOIN im_user p ON p.id = CASE WHEN r.from_user_id = #{userId}
             THEN r.to_user_id ELSE r.from_user_id END
-        WHERE r.from_user_id = #{userId} OR r.to_user_id = #{userId}
-        ORDER BY CASE WHEN r.status = 'PENDING' THEN 0 ELSE 1 END, r.id DESC
-        LIMIT 100
+        WHERE (r.from_user_id = #{userId} OR r.to_user_id = #{userId}) AND r.id &lt; #{beforeId}
+        ORDER BY r.id DESC
+        LIMIT #{limit}
     </select>
 
     <select id="requestForUpdate" resultMap="requestRow">

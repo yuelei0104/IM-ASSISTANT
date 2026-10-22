@@ -23,6 +23,9 @@
         VALUES (#{low}, #{high}, #{senderId}, #{recipientId}, #{clientMsgId}, #{body})
         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
     </insert>
+    <insert id="trackInbox">
+        INSERT IGNORE INTO im_direct_inbox (user_id, peer_id) VALUES (#{userId}, #{peerId})
+    </insert>
     <select id="byClientId" resultMap="message">
         SELECT id, sender_id, recipient_id, client_msg_id, body, created_at
         FROM im_direct_message WHERE sender_id = #{senderId} AND client_msg_id = #{clientMsgId}
@@ -36,11 +39,14 @@
         LIMIT #{limit}
     </select>
     <select id="unreadCounts" resultMap="unreadCount">
-        SELECT m.sender_id AS peer_id, COUNT(*) AS unread_count
-        FROM im_direct_message m
-        LEFT JOIN im_direct_read r ON r.user_id = #{userId} AND r.peer_id = m.sender_id
-        WHERE m.recipient_id = #{userId} AND m.id &gt; COALESCE(r.last_read_message_id, 0)
-        GROUP BY m.sender_id
+        SELECT i.peer_id,
+               (SELECT COUNT(*) FROM im_direct_message m FORCE INDEX (idx_direct_unread)
+                WHERE m.recipient_id = i.user_id AND m.sender_id = i.peer_id
+                  AND m.id &gt; COALESCE(r.last_read_message_id, 0)) AS unread_count
+        FROM im_direct_inbox i
+        LEFT JOIN im_direct_read r ON r.user_id = i.user_id AND r.peer_id = i.peer_id
+        WHERE i.user_id = #{userId}
+        HAVING unread_count &gt; 0
     </select>
     <select id="receivedCount" resultType="long">
         SELECT COUNT(*) FROM im_direct_message

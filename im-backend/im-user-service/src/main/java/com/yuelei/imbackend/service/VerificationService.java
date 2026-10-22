@@ -6,6 +6,7 @@ import com.yuelei.imbackend.util.Contacts.Purpose;
 import com.yuelei.imbackend.util.Contacts.Type;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -15,6 +16,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.List;
 
 /** Local development code delivery. Replace with an SMS/email provider before deployment. */
 @Service
@@ -22,6 +24,19 @@ public class VerificationService {
     private static final Duration CODE_TTL = Duration.ofMinutes(5);
     private static final Duration COOLDOWN = Duration.ofSeconds(60);
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final DefaultRedisScript<Long> VERIFY_AND_CONSUME = new DefaultRedisScript<>("""
+            local saved = redis.call('GET', KEYS[1])
+            if not saved then return -1 end
+            local attempts = redis.call('INCR', KEYS[2])
+            if attempts == 1 then redis.call('EXPIRE', KEYS[2], 300) end
+            if attempts > 5 then
+                redis.call('DEL', KEYS[1])
+                return -2
+            end
+            if saved ~= ARGV[1] then return 0 end
+            redis.call('DEL', KEYS[1], KEYS[2])
+            return 1
+            """, Long.class);
     private final StringRedisTemplate redis;
     private final boolean devMode;
 
@@ -42,28 +57,17 @@ public class VerificationService {
         return new CodeSent(300, 60, code);
     }
 
-    public void verify(Purpose purpose, Type type, String contact, String code) {
+    public void verifyAndConsume(Purpose purpose, Type type, String contact, String code) {
         if (code == null || !code.matches("[0-9]{6}"))
             throw new AuthException(HttpStatus.BAD_REQUEST, "请输入 6 位验证码");
         String key = key(purpose, type, contact);
-        String saved = redis.opsForValue().get(key);
-        if (saved == null)
+        Long result = redis.execute(VERIFY_AND_CONSUME, List.of(key, key + ":attempts"), digest(code));
+        if (result == null || result == -1)
             throw new AuthException(HttpStatus.BAD_REQUEST, "验证码不存在或已过期");
-        Long attempts = redis.opsForValue().increment(key + ":attempts");
-        if (attempts != null && attempts == 1) redis.expire(key + ":attempts", CODE_TTL);
-        if (attempts != null && attempts > 5) {
-            redis.delete(key);
+        if (result == -2)
             throw new AuthException(HttpStatus.TOO_MANY_REQUESTS, "验证码错误次数过多，请重新获取");
-        }
-        if (!MessageDigest.isEqual(saved.getBytes(StandardCharsets.UTF_8),
-                digest(code).getBytes(StandardCharsets.UTF_8)))
+        if (result != 1)
             throw new AuthException(HttpStatus.BAD_REQUEST, "验证码不正确");
-    }
-
-    public void consume(Purpose purpose, Type type, String contact) {
-        String key = key(purpose, type, contact);
-        redis.delete(key);
-        redis.delete(key + ":attempts");
     }
 
     private static String key(Purpose purpose, Type type, String contact) {

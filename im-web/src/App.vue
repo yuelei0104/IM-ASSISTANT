@@ -35,8 +35,7 @@ import {
 } from "./authValidation";
 import {
   deleteFriend,
-  findUser,
-  findUserByPhone,
+  friendProfile,
   inviteFriend,
   listFriends,
   listRequests,
@@ -44,7 +43,7 @@ import {
   type ContactProfile,
   type ContactRequest,
 } from "./contactApi";
-import { listUnreadDirect, loadDirectMessages, markDirectRead, sendDirectMessage, type DirectMessage } from "./chatApi";
+import { connectChatSocket, listUnreadDirect, loadDirectMessages, markDirectRead, sendDirectMessage, type DirectMessage } from "./chatApi";
 import {
   clock,
   initialState,
@@ -168,9 +167,11 @@ const friendQuery = ref("");
 const friendNote = ref("");
 const friendError = ref("");
 const friendBusy = ref(false);
-const foundProfile = ref<ContactProfile | null>(null);
 const contactProfiles = ref<ContactProfile[]>([]);
+const friendsNextCursor = ref<number | null>(null);
+const requestsNextCursor = ref<number | null>(null);
 const knownPeers = ref<ContactProfile[]>([]);
+const loadingPeers = new Set<number>();
 const directMessages = ref<DirectMessage[]>([]);
 const directUnread = ref<Record<number, number>>({});
 const lastMarkedRead = new Map<number, number>();
@@ -182,6 +183,9 @@ const chatBusy = ref(false);
 const chatError = ref("");
 const sending = ref(false);
 let chatSeq = 0;
+let pendingRealtimeRefresh = false;
+let chatSocket: ReturnType<typeof connectChatSocket> | null = null;
+let lastHealthyPoll = 0;
 let pendingSend: { peerId: number; text: string; clientMsgId: string } | null = null;
 const contactRequests = ref<ContactRequest[]>([]);
 const contactsBusy = ref(false);
@@ -397,10 +401,29 @@ async function refreshUnread() {
     const counts = await listUnreadDirect();
     if (sequence !== unreadSeq || currentAccount.value?.id !== accountId) return;
     directUnread.value = Object.fromEntries(counts.map(({ peerId, unreadCount }) => [peerId, unreadCount]));
+    for (const { peerId, unreadCount } of counts) {
+      if (unreadCount > 0 && !contactProfiles.value.some((p) => p.id === peerId)
+          && !loadingPeers.has(peerId)) void loadUnreadPeer(peerId, accountId);
+    }
   } catch {
     // Keep the last confirmed counts; a temporary outage must not mark messages as read.
   } finally {
     if (sequence === unreadSeq) unreadBusy = false;
+  }
+}
+async function loadUnreadPeer(peerId: number, accountId: number) {
+  loadingPeers.add(peerId);
+  try {
+    const profile = await friendProfile(peerId);
+    if (currentAccount.value?.id !== accountId) return;
+    if (!contactProfiles.value.some((p) => p.id === peerId))
+      contactProfiles.value = [...contactProfiles.value, profile];
+    if (!knownPeers.value.some((p) => p.id === peerId))
+      knownPeers.value = [...knownPeers.value, profile];
+  } catch {
+    // An old sender may no longer be a friend. Do not reveal the profile.
+  } finally {
+    loadingPeers.delete(peerId);
   }
 }
 async function markVisibleRead(peerId: number) {
@@ -443,6 +466,10 @@ async function refreshDirectChat() {
     if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "消息加载失败";
   } finally {
     if (sequence === chatSeq) chatBusy.value = false;
+    if (pendingRealtimeRefresh && sequence === chatSeq) {
+      pendingRealtimeRefresh = false;
+      void refreshDirectChat();
+    }
   }
 }
 async function loadOlderDirect() {
@@ -464,10 +491,20 @@ async function loadOlderDirect() {
     if (sequence === chatSeq) chatBusy.value = false;
   }
 }
+function onChatEvent() {
+  if (!currentAccount.value) return;
+  void refreshUnread();
+  if (page.value === "chat" && directPeer(activeId.value)) {
+    if (chatBusy.value) pendingRealtimeRefresh = true;
+    else void refreshDirectChat();
+  }
+}
 const chatPoll = setInterval(() => {
   if (!currentAccount.value || document.hidden) return;
-  void refreshUnread();
-  if (page.value === "chat" && directPeer(activeId.value) && !chatBusy.value) void refreshDirectChat();
+  // Keep periodic recovery even when the socket is healthy (Pub/Sub is not durable).
+  if (chatSocket?.connected() && Date.now() - lastHealthyPoll < 30_000) return;
+  lastHealthyPoll = Date.now();
+  onChatEvent();
 }, 5000);
 function switchAuthMode(next: "login" | "register" | "reset") {
   authMode.value = next;
@@ -540,6 +577,8 @@ async function requestCode(
   }
 }
 function applyAccount(account: Account) {
+  chatSocket?.close();
+  pendingRealtimeRefresh = false;
   chatSeq++;
   unreadSeq++;
   unreadBusy = false;
@@ -559,6 +598,7 @@ function applyAccount(account: Account) {
   page.value = "chat";
   void refreshContacts();
   void refreshUnread();
+  chatSocket = connectChatSocket(onChatEvent);
   nextTick(scrollBottom);
 }
 async function refreshContacts() {
@@ -574,11 +614,13 @@ async function refreshContacts() {
     ]);
     if (sequence !== contactsSeq || currentAccount.value?.id !== accountId)
       return;
-    contactProfiles.value = profiles;
+    contactProfiles.value = profiles.items;
+    friendsNextCursor.value = profiles.nextCursor;
+    requestsNextCursor.value = requests.nextCursor;
     const merged = new Map(knownPeers.value.map((p) => [p.id, p]));
-    for (const profile of profiles) merged.set(profile.id, profile);
+    for (const profile of profiles.items) merged.set(profile.id, profile);
     knownPeers.value = [...merged.values()];
-    contactRequests.value = requests;
+    contactRequests.value = requests.items;
   } catch (error) {
     if (sequence !== contactsSeq || currentAccount.value?.id !== accountId)
       return;
@@ -590,6 +632,45 @@ async function refreshContacts() {
       contactsError.value =
         error instanceof Error ? error.message : "无法加载好友";
     }
+  } finally {
+    if (sequence === contactsSeq) contactsBusy.value = false;
+  }
+}
+async function loadMoreFriends() {
+  const cursor = friendsNextCursor.value;
+  const accountId = currentAccount.value?.id;
+  if (!cursor || !accountId || contactsBusy.value) return;
+  const sequence = contactsSeq;
+  contactsBusy.value = true;
+  try {
+    const page = await listFriends(cursor);
+    if (sequence !== contactsSeq || currentAccount.value?.id !== accountId) return;
+    const allProfiles = new Map(contactProfiles.value.map((p) => [p.id, p]));
+    for (const profile of page.items) allProfiles.set(profile.id, profile);
+    contactProfiles.value = [...allProfiles.values()];
+    friendsNextCursor.value = page.nextCursor;
+    const merged = new Map(knownPeers.value.map((p) => [p.id, p]));
+    for (const profile of page.items) merged.set(profile.id, profile);
+    knownPeers.value = [...merged.values()];
+  } catch (error) {
+    contactsError.value = error instanceof Error ? error.message : "加载好友失败";
+  } finally {
+    if (sequence === contactsSeq) contactsBusy.value = false;
+  }
+}
+async function loadMoreRequests() {
+  const cursor = requestsNextCursor.value;
+  const accountId = currentAccount.value?.id;
+  if (!cursor || !accountId || contactsBusy.value) return;
+  const sequence = contactsSeq;
+  contactsBusy.value = true;
+  try {
+    const page = await listRequests(cursor);
+    if (sequence !== contactsSeq || currentAccount.value?.id !== accountId) return;
+    contactRequests.value = [...contactRequests.value, ...page.items];
+    requestsNextCursor.value = page.nextCursor;
+  } catch (error) {
+    contactsError.value = error instanceof Error ? error.message : "加载申请失败";
   } finally {
     if (sequence === contactsSeq) contactsBusy.value = false;
   }
@@ -708,6 +789,9 @@ async function signOut() {
     }
   }
   stopVoice();
+  chatSocket?.close();
+  chatSocket = null;
+  pendingRealtimeRefresh = false;
   contactsSeq++;
   chatSeq++;
   unreadSeq++;
@@ -716,6 +800,8 @@ async function signOut() {
   lastMarkedRead.clear();
   readInFlight.clear();
   contactProfiles.value = [];
+  friendsNextCursor.value = null;
+  requestsNextCursor.value = null;
   knownPeers.value = [];
   directMessages.value = [];
   contactRequests.value = [];
@@ -793,59 +879,25 @@ async function send() {
   nextTick(scrollBottom);
   notify("已保存在本地；接入消息接口后才能发送给其他人");
 }
-async function searchFriend() {
+async function requestFriend() {
+  if (friendBusy.value) return;
   const type = friendSearchType.value;
-  const query =
-    type === "phone"
-      ? normalizeContact("phone", friendQuery.value)
-      : friendQuery.value.trim().replace(/^@/, "").toLowerCase();
-  friendError.value = "";
-  foundProfile.value = null;
-  if (
-    type === "phone"
-      ? !validContact("phone", query)
-      : !/^[a-z0-9_]{3,20}$/.test(query)
-  ) {
-    friendError.value =
-      type === "phone"
-        ? "请输入正确的中国大陆手机号"
-        : "请输入 3–20 位字母、数字或下划线账号";
+  const query = type === "phone"
+    ? normalizeContact("phone", friendQuery.value)
+    : friendQuery.value.trim().replace(/^@/, "").toLowerCase();
+  if (type === "phone" ? !validContact("phone", query) : !/^[a-z0-9_]{3,20}$/.test(query)) {
+    friendError.value = type === "phone" ? "请输入正确的中国大陆手机号" : "请输入 3–20 位字母、数字或下划线账号";
     return;
   }
   friendBusy.value = true;
-  try {
-    const profile =
-      type === "phone" ? await findUserByPhone(query) : await findUser(query);
-    const current =
-      type === "phone"
-        ? normalizeContact("phone", friendQuery.value)
-        : friendQuery.value.trim().replace(/^@/, "").toLowerCase();
-    if (friendSearchType.value !== type || current !== query) return;
-    if (profile.id === currentAccount.value?.id)
-      throw new Error("不能添加自己为好友");
-    if (contactProfiles.value.some((p) => p.id === profile.id))
-      throw new Error("你们已经是好友");
-    foundProfile.value = profile;
-  } catch (error) {
-    friendError.value = error instanceof Error ? error.message : "查找失败";
-  } finally {
-    friendBusy.value = false;
-  }
-}
-async function requestFriend() {
-  if (!foundProfile.value || friendBusy.value) return;
-  friendBusy.value = true;
   friendError.value = "";
   try {
-    const identifier =
-      friendSearchType.value === "phone"
-        ? { phone: normalizeContact("phone", friendQuery.value) }
-        : { handle: foundProfile.value.handle };
+    const identifier = type === "phone" ? { phone: query } : { handle: query };
     await inviteFriend(identifier, friendNote.value.trim());
     modal.value = null;
     page.value = "requests";
     await refreshContacts();
-    notify("好友申请已发送");
+    notify("如果账号存在且可接收申请，对方会收到邀请");
   } catch (error) {
     friendError.value = error instanceof Error ? error.message : "发送失败";
   } finally {
@@ -885,7 +937,6 @@ function openModal(m: Modal) {
   friendQuery.value = "";
   friendNote.value = "";
   friendError.value = "";
-  foundProfile.value = null;
   groupName.value = "";
 }
 function toggleInvite(id: string) {
@@ -1032,6 +1083,7 @@ function visibility() {
 document.addEventListener("visibilitychange", visibility);
 onBeforeUnmount(() => {
   stopVoice();
+  chatSocket?.close();
   clearInterval(chatPoll);
   clearTimeout(toastTimer);
   clearInterval(codeInterval);
@@ -1958,6 +2010,7 @@ onBeforeUnmount(() => {
           <div v-if="!friends.length && !contactsBusy" class="empty-state">
             还没有好友，试试通过唯一账号添加。
           </div>
+          <button v-if="friendsNextCursor" class="text-button" :disabled="contactsBusy" @click="loadMoreFriends">加载更多好友</button>
         </div>
       </div>
       <div v-if="page === 'requests'" class="page-content">
@@ -2064,6 +2117,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
+        <button v-if="requestsNextCursor" class="text-button" :disabled="contactsBusy" @click="loadMoreRequests">加载更早申请</button>
       </div>
       <div v-if="page === 'notices'" class="page-content">
         <div class="content-card">
@@ -2471,7 +2525,7 @@ onBeforeUnmount(() => {
         </div>
         <template v-if="modal === 'friend'"
           ><p class="modal-lead">
-            用对方已绑定的手机号或唯一账号查找，确认昵称后再发送申请。
+            输入对方已绑定的手机号或唯一账号，直接发送申请。为保护隐私，不显示查询结果。
           </p>
           <div class="auth-tabs" role="group" aria-label="查找方式">
             <button
@@ -2481,7 +2535,6 @@ onBeforeUnmount(() => {
               @click="
                 friendSearchType = 'phone';
                 friendQuery = '';
-                foundProfile = null;
                 friendError = '';
               "
             >
@@ -2494,7 +2547,6 @@ onBeforeUnmount(() => {
               @click="
                 friendSearchType = 'handle';
                 friendQuery = '';
-                foundProfile = null;
                 friendError = '';
               "
             >
@@ -2511,10 +2563,9 @@ onBeforeUnmount(() => {
               v-model="friendQuery"
               placeholder="输入唯一账号"
               @input="
-                foundProfile = null;
                 friendError = '';
               "
-              @keydown.enter.prevent="searchFriend"
+              @keydown.enter.prevent="requestFriend"
             />
           </div>
           <input
@@ -2526,22 +2577,10 @@ onBeforeUnmount(() => {
             autocomplete="off"
             placeholder="输入已绑定的手机号"
             @input="
-              foundProfile = null;
               friendError = '';
             "
-            @keydown.enter.prevent="searchFriend"
+            @keydown.enter.prevent="requestFriend"
           />
-          <button
-            class="outline-button"
-            type="button"
-            :disabled="friendBusy || !friendQuery.trim()"
-            @click="searchFriend"
-          >
-            {{ friendBusy ? "查询中…" : "查找用户" }}
-          </button>
-          <p v-if="foundProfile" class="success-text" role="status">
-            找到 {{ foundProfile.nickname }} · @{{ foundProfile.handle }}
-          </p>
           <p v-if="friendError" class="error-text" role="alert">
             {{ friendError }}
           </p>
@@ -2555,7 +2594,7 @@ onBeforeUnmount(() => {
             placeholder="介绍一下自己吧…"
           /><button
             class="primary-button full modal-submit"
-            :disabled="!foundProfile || friendBusy"
+            :disabled="!friendQuery.trim() || friendBusy"
             @click="requestFriend"
           >
             发送好友申请

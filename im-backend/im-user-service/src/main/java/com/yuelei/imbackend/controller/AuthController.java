@@ -2,6 +2,7 @@ package com.yuelei.imbackend.controller;
 
 import com.yuelei.imbackend.dto.AuthDtos.*;
 import com.yuelei.imbackend.service.AuthService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -30,8 +31,9 @@ public class AuthController {
     public Account register(@Valid @RequestBody Register input) { return auth.register(input); }
 
     @PostMapping("/login/password")
-    public LoginResult passwordLogin(@Valid @RequestBody PasswordLogin input) {
-        return auth.passwordLogin(input);
+    public LoginResult passwordLogin(@Valid @RequestBody PasswordLogin input, HttpServletRequest request) {
+        // Use the socket peer; untrusted X-Forwarded-For headers must not bypass the IP limit.
+        return auth.passwordLogin(input, request.getRemoteAddr());
     }
 
     @PostMapping("/login/code")
@@ -44,6 +46,13 @@ public class AuthController {
     @GetMapping("/me")
     public Account me(@RequestHeader(value = "Authorization", required = false) String authorization) {
         return auth.me(authorization);
+    }
+
+    public record Identity(long userId) { }
+
+    @GetMapping("/identity")
+    public Identity identity(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        return new Identity(auth.requireUserId(authorization));
     }
 
     @PostMapping("/bind")

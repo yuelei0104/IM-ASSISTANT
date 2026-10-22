@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     proxy: {
-      '/api/chats': 'http://127.0.0.1:8082',
+      '/api/chats': { target: 'http://127.0.0.1:8082', ws: true },
       '/api': 'http://127.0.0.1:8081',
     },
   },

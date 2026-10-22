@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { listUnreadDirect, loadDirectMessages, markDirectRead, sendDirectMessage } from "../src/chatApi.ts";
+import { connectChatSocket, listUnreadDirect, loadDirectMessages, markDirectRead, sendDirectMessage } from "../src/chatApi.ts";
 import { sessionKey } from "../src/authApi.ts";
 
 test("direct messages use the user's token, cursor and stable client id", async () => {
@@ -19,6 +19,31 @@ test("direct messages use the user's token, cursor and stable client id", async 
   assert.deepEqual(JSON.parse(calls[1].options.body), {
     clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e37", body: "你好",
   });
+});
+
+test("socket authenticates without URL token and refreshes after a notification", () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "alice-token" : null };
+  globalThis.window = { location: { href: "http://localhost:5173/" } };
+  let opened;
+  globalThis.WebSocket = class {
+    static OPEN = 1;
+    readyState = 1;
+    sent = [];
+    constructor(url) { this.url = String(url); opened = this; }
+    send(value) { this.sent.push(value); }
+    close() { this.readyState = 3; this.onclose?.(); }
+  };
+  let updates = 0;
+  const connection = connectChatSocket(() => updates++);
+  assert.equal(opened.url, "ws://localhost:5173/api/chats/ws");
+  opened.onopen();
+  assert.deepEqual(opened.sent, ["AUTH alice-token"]);
+  opened.onmessage({ data: "READY" });
+  opened.onmessage({ data: "MSG 42 2 1" });
+  assert.equal(connection.connected(), true);
+  assert.equal(updates, 2);
+  connection.close();
+  assert.equal(connection.connected(), false);
 });
 
 test("an empty proxy error reports its HTTP status", async () => {

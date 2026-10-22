@@ -3,6 +3,7 @@ package com.yuelei.imbackend.service;
 import com.yuelei.imbackend.dao.ContactDao;
 import com.yuelei.imbackend.dao.UserDao;
 import com.yuelei.imbackend.dto.ContactDtos.Invite;
+import com.yuelei.imbackend.dto.ContactPage;
 import com.yuelei.imbackend.exception.AuthException;
 import com.yuelei.imbackend.model.ContactProfile;
 import com.yuelei.imbackend.model.FriendRequestRow;
@@ -22,29 +23,19 @@ public class ContactService {
     private final ContactDao contacts;
     private final UserDao users;
     private final SessionService sessions;
+    private final InvitationRateLimiter inviteLimits;
 
-    public ContactService(ContactDao contacts, UserDao users, SessionService sessions) {
+    public ContactService(ContactDao contacts, UserDao users, SessionService sessions, InvitationRateLimiter inviteLimits) {
         this.contacts = contacts;
         this.users = users;
         this.sessions = sessions;
+        this.inviteLimits = inviteLimits;
     }
 
-    public ContactProfile find(String authorization, String rawHandle) {
-        sessions.requireUserId(authorization);
-        UserAccount account = users.byHandle(Contacts.handle(rawHandle));
-        if (account == null) throw new AuthException(HttpStatus.NOT_FOUND, "未找到该账号");
-        return profile(account);
-    }
-
-    public ContactProfile findByPhone(String authorization, String rawPhone) {
-        sessions.requireUserId(authorization);
-        UserAccount account = users.byPhone(Contacts.normalize(Type.PHONE, rawPhone));
-        if (account == null) throw new AuthException(HttpStatus.NOT_FOUND, "未找到该手机号绑定的账号");
-        return profile(account);
-    }
-
-    public List<ContactProfile> friends(String authorization) {
-        return contacts.friends(sessions.requireUserId(authorization));
+    public ContactPage<ContactProfile> friends(String authorization, Long afterId, int limit) {
+        validatePage(afterId, limit);
+        return page(contacts.friends(sessions.requireUserId(authorization), afterId == null ? 0 : afterId, limit + 1), limit,
+                ContactProfile::id);
     }
 
     public long requireFriend(String authorization, long friendId) {
@@ -55,8 +46,17 @@ public class ContactService {
         return me;
     }
 
-    public List<FriendRequestView> requests(String authorization) {
-        return contacts.requests(sessions.requireUserId(authorization));
+    public ContactProfile friendProfile(String authorization, long friendId) {
+        requireFriend(authorization, friendId);
+        UserAccount friend = users.byId(friendId);
+        if (friend == null) throw new AuthException(HttpStatus.NOT_FOUND, "好友账号不存在");
+        return new ContactProfile(friend.id(), friend.nickname(), friend.handle());
+    }
+
+    public ContactPage<FriendRequestView> requests(String authorization, Long beforeId, int limit) {
+        validatePage(beforeId, limit);
+        return page(contacts.requests(sessions.requireUserId(authorization), beforeId == null ? Long.MAX_VALUE : beforeId, limit + 1), limit,
+                FriendRequestView::id);
     }
 
     @Transactional
@@ -66,23 +66,21 @@ public class ContactService {
         boolean hasPhone = input.phone() != null && !input.phone().isBlank();
         if (hasHandle == hasPhone)
             throw new AuthException(HttpStatus.BAD_REQUEST, "请填写手机号或唯一账号，两者只需一项");
+        String normalized = hasPhone ? Contacts.normalize(Type.PHONE, input.phone()) : Contacts.handle(input.handle());
+        inviteLimits.check(me);
         UserAccount target = hasPhone
-                ? users.byPhone(Contacts.normalize(Type.PHONE, input.phone()))
-                : users.byHandle(Contacts.handle(input.handle()));
-        if (target == null) throw new AuthException(HttpStatus.NOT_FOUND, "未找到该账号");
-        if (target.id() == me) throw new AuthException(HttpStatus.BAD_REQUEST, "不能添加自己为好友");
+                ? users.byPhone(normalized) : users.byHandle(normalized);
+        // Keep the response identical for unknown, self, already-friends and duplicate invitations.
+        if (target == null || target.id() == me) return;
         long low = Math.min(me, target.id()), high = Math.max(me, target.id());
-        if (contacts.friendshipCount(low, high) > 0)
-            throw new AuthException(HttpStatus.CONFLICT, "你们已经是好友");
+        if (contacts.friendshipCount(low, high) > 0) return;
         String note = input.note() == null || input.note().isBlank()
                 ? "你好，想加你为好友。" : input.note().trim();
         try {
             contacts.invite(me, target.id(), note);
         } catch (DataIntegrityViolationException ex) {
-            throw new AuthException(HttpStatus.CONFLICT, "你们已有待处理的申请");
+            // Another pending request (or a concurrent friendship) has the same public result.
         }
-        if (contacts.friendshipCount(low, high) > 0)
-            throw new AuthException(HttpStatus.CONFLICT, "你们已经是好友");
     }
 
     @Transactional
@@ -110,7 +108,13 @@ public class ContactService {
             throw new AuthException(HttpStatus.NOT_FOUND, "好友关系不存在");
     }
 
-    private static ContactProfile profile(UserAccount account) {
-        return new ContactProfile(account.id(), account.nickname(), account.handle());
+    private static void validatePage(Long cursor, int limit) {
+        if (cursor != null && cursor <= 0 || limit < 1 || limit > 50)
+            throw new AuthException(HttpStatus.BAD_REQUEST, "分页参数无效");
+    }
+
+    private static <T> ContactPage<T> page(List<T> rows, int limit, java.util.function.ToLongFunction<T> id) {
+        List<T> items = rows.subList(0, Math.min(rows.size(), limit));
+        return new ContactPage<>(items, rows.size() > limit ? id.applyAsLong(items.get(items.size() - 1)) : null);
     }
 }

@@ -7,7 +7,9 @@ import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.DirectMessage;
 import com.yuelei.imchat.model.UnreadCount;
 import org.springframework.http.HttpStatus;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -17,12 +19,15 @@ import java.util.List;
 public class DirectMessageService {
     private final MessageDao messages;
     private final UserAccessClient access;
+    private final ApplicationEventPublisher events;
 
-    public DirectMessageService(MessageDao messages, UserAccessClient access) {
+    public DirectMessageService(MessageDao messages, UserAccessClient access, ApplicationEventPublisher events) {
         this.messages = messages;
         this.access = access;
+        this.events = events;
     }
 
+    @Transactional
     public DirectMessage send(String authorization, long friendId, Send input) {
         if (friendId <= 0) throw new ChatException(HttpStatus.BAD_REQUEST, "好友账号无效");
         long senderId = access.requireFriend(authorization, friendId);
@@ -34,6 +39,8 @@ public class DirectMessageService {
         if (saved == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "消息保存失败");
         if (saved.recipientId() != friendId || !saved.body().equals(body))
             throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于另一条消息");
+        messages.trackInbox(friendId, senderId);
+        events.publishEvent(saved);
         return saved;
     }
 

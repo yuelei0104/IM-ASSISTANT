@@ -10,8 +10,10 @@ import java.util.List;
 
 @Mapper
 public interface ContactDao {
-    List<ContactProfile> friends(@Param("userId") long userId);
-    List<FriendRequestView> requests(@Param("userId") long userId);
+    List<ContactProfile> friends(@Param("userId") long userId, @Param("afterId") long afterId,
+                                 @Param("limit") int limit);
+    List<FriendRequestView> requests(@Param("userId") long userId, @Param("beforeId") long beforeId,
+                                     @Param("limit") int limit);
     FriendRequestRow requestForUpdate(@Param("id") long id);
     long friendshipCount(@Param("low") long low, @Param("high") long high);
     int invite(@Param("fromId") long fromId, @Param("toId") long toId, @Param("note") String note);

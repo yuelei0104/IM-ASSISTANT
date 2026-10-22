@@ -12,6 +12,7 @@ public interface MessageDao {
     int insert(@Param("low") long low, @Param("high") long high,
                @Param("senderId") long senderId, @Param("recipientId") long recipientId,
                @Param("clientMsgId") String clientMsgId, @Param("body") String body);
+    int trackInbox(@Param("userId") long userId, @Param("peerId") long peerId);
     DirectMessage byClientId(@Param("senderId") long senderId, @Param("clientMsgId") String clientMsgId);
     List<DirectMessage> history(@Param("low") long low, @Param("high") long high,
                                 @Param("beforeId") Long beforeId, @Param("limit") int limit);

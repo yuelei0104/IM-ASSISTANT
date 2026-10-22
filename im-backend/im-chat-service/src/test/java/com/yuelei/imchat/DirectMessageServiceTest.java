@@ -8,6 +8,7 @@ import com.yuelei.imchat.model.UnreadCount;
 import com.yuelei.imchat.service.DirectMessageService;
 import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -18,7 +19,8 @@ import static org.mockito.Mockito.*;
 class DirectMessageServiceTest {
     private final MessageDao dao = mock(MessageDao.class);
     private final UserAccessClient access = mock(UserAccessClient.class);
-    private final DirectMessageService service = new DirectMessageService(dao, access);
+    private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
+    private final DirectMessageService service = new DirectMessageService(dao, access, events);
     private static final String ID = "e9873e73-1326-4329-a4c0-936912a48e37";
 
     @Test
@@ -29,6 +31,8 @@ class DirectMessageServiceTest {
 
         assertEquals(stored, service.send("Bearer t", 9, new Send(ID, " 你好 ")));
         verify(dao).insert(9, 23, 23, 9, ID, "你好");
+        verify(dao).trackInbox(9, 23);
+        verify(events).publishEvent(stored);
     }
 
     @Test
@@ -37,6 +41,7 @@ class DirectMessageServiceTest {
         when(dao.byClientId(23, ID))
                 .thenReturn(new DirectMessage(42, 23, 9, ID, "原内容", LocalDateTime.now()));
         assertThrows(ChatException.class, () -> service.send("Bearer t", 9, new Send(ID, "新内容")));
+        verifyNoInteractions(events);
     }
 
     @Test

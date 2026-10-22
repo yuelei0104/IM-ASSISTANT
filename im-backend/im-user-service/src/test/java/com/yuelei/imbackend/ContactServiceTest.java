@@ -6,18 +6,23 @@ import com.yuelei.imbackend.dto.ContactDtos.Invite;
 import com.yuelei.imbackend.exception.AuthException;
 import com.yuelei.imbackend.model.FriendRequestRow;
 import com.yuelei.imbackend.model.UserAccount;
+import com.yuelei.imbackend.model.ContactProfile;
 import com.yuelei.imbackend.service.ContactService;
 import com.yuelei.imbackend.service.SessionService;
+import com.yuelei.imbackend.service.InvitationRateLimiter;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import java.util.List;
 import static org.mockito.Mockito.*;
 
 class ContactServiceTest {
     private final ContactDao contacts = mock(ContactDao.class);
     private final UserDao users = mock(UserDao.class);
     private final SessionService sessions = mock(SessionService.class);
-    private final ContactService service = new ContactService(contacts, users, sessions);
+    private final InvitationRateLimiter inviteLimits = mock(InvitationRateLimiter.class);
+    private final ContactService service = new ContactService(contacts, users, sessions, inviteLimits);
 
     @Test
     void chatAccessUsesTheSessionAndCurrentFriendship() {
@@ -61,21 +66,19 @@ class ContactServiceTest {
         when(users.byHandle("self_10"))
                 .thenReturn(new UserAccount(10L, "self", "self_10", null, "self@example.com", "hash"));
 
-        assertThrows(AuthException.class, () -> service.invite("Bearer token", new Invite("self_10", null, "hi")));
+        service.invite("Bearer token", new Invite("self_10", null, "hi"));
         verify(contacts, never()).invite(anyLong(), anyLong(), anyString());
     }
 
     @Test
-    void phoneLookupAndInvitationUseTheBoundPhoneWithoutExposingIt() {
+    void invitationUsesTheBoundPhoneWithoutExposingIt() {
         when(sessions.requireUserId("Bearer token")).thenReturn(10L);
         when(users.byPhone("13800138000"))
                 .thenReturn(new UserAccount(25L, "friend", "friend_25", "13800138000", null, "hash"));
 
-        var profile = service.findByPhone("Bearer token", "138 0013 8000");
         service.invite("Bearer token", new Invite(null, "138 0013 8000", "hi"));
 
-        org.junit.jupiter.api.Assertions.assertEquals("friend_25", profile.handle());
-        verify(users, times(2)).byPhone("13800138000");
+        verify(users).byPhone("13800138000");
         verify(contacts).invite(10L, 25L, "hi");
     }
 
@@ -85,5 +88,28 @@ class ContactServiceTest {
         assertThrows(AuthException.class, () -> service.invite("Bearer token", new Invite(null, null, "hi")));
         assertThrows(AuthException.class, () -> service.invite("Bearer token", new Invite("user_25", "13800138000", "hi")));
         verifyNoInteractions(users, contacts);
+    }
+
+    @Test
+    void unknownPhoneAndDuplicateInvitationHaveTheSameOutcome() {
+        when(sessions.requireUserId("Bearer token")).thenReturn(10L);
+        service.invite("Bearer token", new Invite(null, "13800138000", "hi"));
+        when(users.byPhone("13800138000"))
+                .thenReturn(new UserAccount(25L, "friend", "friend_25", "13800138000", null, "hash"));
+        when(contacts.friendshipCount(10L, 25L)).thenReturn(1L);
+        service.invite("Bearer token", new Invite(null, "13800138000", "hi"));
+        verify(contacts, never()).invite(anyLong(), anyLong(), anyString());
+        verify(inviteLimits, times(2)).check(10L);
+    }
+
+    @Test
+    void friendsReturnAStableCursorAndProfileRequiresFriendship() {
+        when(sessions.requireUserId("Bearer token")).thenReturn(10L);
+        when(contacts.friends(10L, 0L, 2)).thenReturn(List.of(
+                new ContactProfile(20L, "A", "user_20"), new ContactProfile(30L, "B", "user_30")));
+        var page = service.friends("Bearer token", null, 1);
+        assertEquals(20L, page.nextCursor());
+        assertEquals(1, page.items().size());
+        assertThrows(AuthException.class, () -> service.friendProfile("Bearer token", 99L));
     }
 }

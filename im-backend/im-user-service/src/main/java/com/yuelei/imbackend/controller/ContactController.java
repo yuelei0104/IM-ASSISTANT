@@ -1,6 +1,7 @@
 package com.yuelei.imbackend.controller;
 
 import com.yuelei.imbackend.dto.ContactDtos.Invite;
+import com.yuelei.imbackend.dto.ContactPage;
 import com.yuelei.imbackend.model.ContactProfile;
 import com.yuelei.imbackend.model.FriendRequestView;
 import com.yuelei.imbackend.service.ContactService;
@@ -17,24 +18,20 @@ public class ContactController {
 
     public ContactController(ContactService contacts) { this.contacts = contacts; }
 
-    @GetMapping("/users/{handle}")
-    public ContactProfile find(@RequestHeader(value = "Authorization", required = false) String authorization,
-                               @PathVariable String handle) {
-        return contacts.find(authorization, handle);
-    }
-
-    @GetMapping("/users/phone/{phone}")
-    public ContactProfile findByPhone(@RequestHeader(value = "Authorization", required = false) String authorization,
-                                      @PathVariable String phone) {
-        return contacts.findByPhone(authorization, phone);
-    }
-
     @GetMapping
-    public List<ContactProfile> friends(@RequestHeader(value = "Authorization", required = false) String authorization) {
-        return contacts.friends(authorization);
+    public ContactPage<ContactProfile> friends(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                                @RequestParam(required = false) Long afterId,
+                                                @RequestParam(defaultValue = "50") int limit) {
+        return contacts.friends(authorization, afterId, limit);
     }
 
     public record ChatAccess(long userId) { }
+
+    @GetMapping("/{friendId}/profile")
+    public ContactProfile profile(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                  @PathVariable long friendId) {
+        return contacts.friendProfile(authorization, friendId);
+    }
 
     @GetMapping("/{friendId}/access")
     public ChatAccess access(@RequestHeader(value = "Authorization", required = false) String authorization,
@@ -43,12 +40,14 @@ public class ContactController {
     }
 
     @GetMapping("/requests")
-    public List<FriendRequestView> requests(@RequestHeader(value = "Authorization", required = false) String authorization) {
-        return contacts.requests(authorization);
+    public ContactPage<FriendRequestView> requests(@RequestHeader(value = "Authorization", required = false) String authorization,
+                                                    @RequestParam(required = false) Long beforeId,
+                                                    @RequestParam(defaultValue = "50") int limit) {
+        return contacts.requests(authorization, beforeId, limit);
     }
 
     @PostMapping("/requests")
-    @ResponseStatus(HttpStatus.CREATED)
+    @ResponseStatus(HttpStatus.ACCEPTED)
     public void invite(@RequestHeader(value = "Authorization", required = false) String authorization,
                        @Valid @RequestBody Invite input) {
         contacts.invite(authorization, input);

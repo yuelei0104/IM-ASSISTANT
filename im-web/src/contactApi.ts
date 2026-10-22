@@ -1,6 +1,7 @@
 import { ApiError, sessionToken } from "./authApi";
 
 export type ContactProfile = { id: number; nickname: string; handle: string };
+export type ContactPage<T> = { items: T[]; nextCursor: number | null };
 export type ContactRequest = {
   id: number;
   fromId: number;
@@ -45,16 +46,17 @@ async function request<T>(
       response.status,
     );
   }
-  if (response.status === 204 || response.status === 201) return undefined as T;
+  if (response.status === 204 || response.status === 201 || response.status === 202) return undefined as T;
   return response.json() as Promise<T>;
 }
 
-export const listFriends = () => request<ContactProfile[]>("");
-export const listRequests = () => request<ContactRequest[]>("/requests");
-export const findUser = (handle: string) =>
-  request<ContactProfile>(`/users/${encodeURIComponent(handle)}`);
-export const findUserByPhone = (phone: string) =>
-  request<ContactProfile>(`/users/phone/${encodeURIComponent(phone)}`);
+export const listFriends = (afterId?: number) => request<ContactPage<ContactProfile>>(
+  afterId ? `?afterId=${afterId}` : "",
+);
+export const listRequests = (beforeId?: number) => request<ContactPage<ContactRequest>>(
+  beforeId ? `/requests?beforeId=${beforeId}` : "/requests",
+);
+export const friendProfile = (friendId: number) => request<ContactProfile>(`/${friendId}/profile`);
 export const inviteFriend = (
   identifier: { handle: string } | { phone: string },
   note: string,
