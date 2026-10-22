@@ -109,6 +109,10 @@ Chat uses a separate `im_chat_schema_history` Flyway table and creates
 `im_direct_message` automatically. The user service must already have applied
 its V1/V2 migrations. Both services use the same local `im_assistant` database
 for this development stage; chat never reads the user service's tables directly.
+Because that database is already nonempty, the chat service baselines its own
+history at version 0 on first startup, then runs its V1 message migration.
+The user service's Flyway history and tables are untouched. Do not remove
+`baseline-version=0`: the default version 1 would skip the chat V1 migration.
 Each chat request forwards its bearer token to the user service to establish
 the caller's identity. Sending also verifies the pair is **currently** friends.
 
