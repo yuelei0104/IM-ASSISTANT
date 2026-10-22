@@ -30,7 +30,16 @@ async function request<T>(peerId: number, query: string, body?: object): Promise
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new ApiError(payload?.message || "消息操作失败", response.status);
+    const serverMessage = payload && typeof payload.message === "string"
+      ? payload.message : null;
+    const fallback = response.status === 401
+      ? "登录已过期，请重新登录"
+      : response.status === 403
+        ? "无权访问此会话"
+        : response.status >= 500
+          ? `消息请求失败（HTTP ${response.status}），请检查 8082 服务窗口和 Vite 代理日志`
+          : `消息请求失败（HTTP ${response.status}）`;
+    throw new ApiError(serverMessage || fallback, response.status);
   }
   return response.json() as Promise<T>;
 }

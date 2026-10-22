@@ -1575,7 +1575,10 @@ onBeforeUnmount(() => {
         </div>
         <div ref="messageScroll" class="message-scroll">
           <div class="messages-inner">
-            <p v-if="chatError && directPeer(activeId)" class="error-text" role="alert">{{ chatError }}</p>
+            <div v-if="chatError && directPeer(activeId)" class="error-text" role="alert">
+              {{ chatError }}
+              <button class="text-button" type="button" :disabled="chatBusy" @click="refreshDirectChat">重试</button>
+            </div>
             <button v-if="directPeer(activeId) && nextBeforeId" class="load-more" :disabled="chatBusy" @click="loadOlderDirect">
               {{ chatBusy ? "加载中…" : "查看更早消息" }}
             </button>
@@ -1587,7 +1590,7 @@ onBeforeUnmount(() => {
               查看更早消息
             </button>
             <p v-if="directPeer(activeId) && chatBusy && !messages.length" role="status">正在加载消息…</p>
-            <p v-if="directPeer(activeId) && !chatBusy && !messages.length" class="empty-list">还没有消息，发一条开始聊天吧</p>
+            <p v-if="directPeer(activeId) && !chatBusy && !chatError && !messages.length" class="empty-list">还没有消息，发一条开始聊天吧</p>
             <div class="day-divider"><span>今天 · 讨论继续</span></div>
             <template v-for="m in visibleMessages" :key="m.id"
               ><div v-if="unreadMarker === m.id" class="unread-divider">

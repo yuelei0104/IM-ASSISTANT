@@ -20,3 +20,9 @@ test("direct messages use the user's token, cursor and stable client id", async 
     clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e37", body: "你好",
   });
 });
+
+test("an empty proxy error reports its HTTP status", async () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "alice-token" : null };
+  globalThis.fetch = async () => new Response("", { status: 500 });
+  await assert.rejects(loadDirectMessages(2), /HTTP 500.*8082/);
+});
