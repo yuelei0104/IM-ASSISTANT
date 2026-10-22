@@ -44,7 +44,7 @@ import {
   type ContactProfile,
   type ContactRequest,
 } from "./contactApi";
-import { loadDirectMessages, sendDirectMessage, type DirectMessage } from "./chatApi";
+import { listUnreadDirect, loadDirectMessages, markDirectRead, sendDirectMessage, type DirectMessage } from "./chatApi";
 import {
   clock,
   initialState,
@@ -172,6 +172,11 @@ const foundProfile = ref<ContactProfile | null>(null);
 const contactProfiles = ref<ContactProfile[]>([]);
 const knownPeers = ref<ContactProfile[]>([]);
 const directMessages = ref<DirectMessage[]>([]);
+const directUnread = ref<Record<number, number>>({});
+const lastMarkedRead = new Map<number, number>();
+const readInFlight = new Set<number>();
+let unreadSeq = 0;
+let unreadBusy = false;
 const nextBeforeId = ref<number | null>(null);
 const chatBusy = ref(false);
 const chatError = ref("");
@@ -232,6 +237,7 @@ watch(page, () => {
   if (page.value !== "chat") mobileChatOpen.value = false;
   if (page.value === "contacts" || page.value === "requests")
     void refreshContacts();
+  if (page.value === "chat" && directPeer(activeId.value)) void refreshDirectChat();
 });
 function directPeer(id: string): number | null {
   if (!/^server-user-[1-9]\d*$/.test(id)) return null;
@@ -244,7 +250,7 @@ const realConversations = computed<Conversation[]>(() =>
     name: p.nickname,
     kind: "direct",
     memberIds: [selfId, `user-${p.id}`],
-    unread: 0,
+    unread: directUnread.value[p.id] ?? 0,
     color: "violet",
     initials: p.nickname[0] || "友",
   })),
@@ -364,7 +370,7 @@ function openChat(id: string, source?: string) {
   page.value = "chat";
   assistantOpen.value = false;
   const c = allConversations.value.find((x) => x.id === id);
-  if (c) c.unread = 0;
+  if (c && !directPeer(id)) c.unread = 0;
   if (source) {
     showOlder.value = true;
     focusId.value = source;
@@ -382,6 +388,42 @@ function mergeDirect(incoming: DirectMessage[]) {
   for (const m of incoming) byId.set(m.id, m);
   directMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
 }
+async function refreshUnread() {
+  const accountId = currentAccount.value?.id;
+  if (!accountId || unreadBusy) return;
+  unreadBusy = true;
+  const sequence = ++unreadSeq;
+  try {
+    const counts = await listUnreadDirect();
+    if (sequence !== unreadSeq || currentAccount.value?.id !== accountId) return;
+    directUnread.value = Object.fromEntries(counts.map(({ peerId, unreadCount }) => [peerId, unreadCount]));
+  } catch {
+    // Keep the last confirmed counts; a temporary outage must not mark messages as read.
+  } finally {
+    if (sequence === unreadSeq) unreadBusy = false;
+  }
+}
+async function markVisibleRead(peerId: number) {
+  const accountId = currentAccount.value?.id;
+  if (!accountId || page.value !== "chat" || directPeer(activeId.value) !== peerId
+      || document.hidden || readInFlight.has(peerId)) return;
+  const lastReceivedId = directMessages.value
+    .filter((m) => m.senderId === peerId && m.recipientId === accountId).at(-1)?.id;
+  if (!lastReceivedId || (lastMarkedRead.get(peerId) ?? 0) >= lastReceivedId) return;
+  readInFlight.add(peerId);
+  try {
+    await markDirectRead(peerId, lastReceivedId);
+    if (currentAccount.value?.id !== accountId) return;
+    lastMarkedRead.set(peerId, lastReceivedId);
+    unreadSeq++;
+    unreadBusy = false;
+    void refreshUnread();
+  } catch {
+    // Try again at the next refresh; do not discard unread state on failure.
+  } finally {
+    readInFlight.delete(peerId);
+  }
+}
 async function refreshDirectChat() {
   const peerId = directPeer(activeId.value);
   const accountId = currentAccount.value?.id;
@@ -394,7 +436,9 @@ async function refreshDirectChat() {
     if (!directMessages.value.length) nextBeforeId.value = result.nextBeforeId;
     mergeDirect(result.messages);
     chatError.value = "";
-    nextTick(scrollBottom);
+    await nextTick();
+    scrollBottom();
+    void markVisibleRead(peerId);
   } catch (error) {
     if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "消息加载失败";
   } finally {
@@ -421,6 +465,8 @@ async function loadOlderDirect() {
   }
 }
 const chatPoll = setInterval(() => {
+  if (!currentAccount.value || document.hidden) return;
+  void refreshUnread();
   if (page.value === "chat" && directPeer(activeId.value) && !chatBusy.value) void refreshDirectChat();
 }, 5000);
 function switchAuthMode(next: "login" | "register" | "reset") {
@@ -495,6 +541,11 @@ async function requestCode(
 }
 function applyAccount(account: Account) {
   chatSeq++;
+  unreadSeq++;
+  unreadBusy = false;
+  directUnread.value = {};
+  lastMarkedRead.clear();
+  readInFlight.clear();
   knownPeers.value = loadKnownPeers(account);
   directMessages.value = [];
   activeId.value = "product";
@@ -507,6 +558,7 @@ function applyAccount(account: Account) {
   currentAccount.value = account;
   page.value = "chat";
   void refreshContacts();
+  void refreshUnread();
   nextTick(scrollBottom);
 }
 async function refreshContacts() {
@@ -658,6 +710,11 @@ async function signOut() {
   stopVoice();
   contactsSeq++;
   chatSeq++;
+  unreadSeq++;
+  unreadBusy = false;
+  directUnread.value = {};
+  lastMarkedRead.clear();
+  readInFlight.clear();
   contactProfiles.value = [];
   knownPeers.value = [];
   directMessages.value = [];
@@ -967,6 +1024,10 @@ function toggleVoice() {
 }
 function visibility() {
   if (document.hidden) stopVoice();
+  else if (currentAccount.value) {
+    void refreshUnread();
+    if (page.value === "chat" && directPeer(activeId.value)) void refreshDirectChat();
+  }
 }
 document.addEventListener("visibilitychange", visibility);
 onBeforeUnmount(() => {
@@ -1426,6 +1487,7 @@ onBeforeUnmount(() => {
             v-if="
               (n.id === 'requests' &&
                 received.some((r) => r.state === 'PENDING')) ||
+              (n.id === 'chat' && Object.values(directUnread).some((count) => count > 0)) ||
               (n.id === 'notices' && unread)
             "
             class="rail-dot"
@@ -1447,7 +1509,7 @@ onBeforeUnmount(() => {
             <p class="overline">WORKSPACE</p>
             <h1>
               消息
-              <span class="count-pill">{{ data.conversations.length }}</span>
+              <span class="count-pill">{{ allConversations.length }}</span>
             </h1>
           </div>
           <button
@@ -1481,6 +1543,7 @@ onBeforeUnmount(() => {
             v-for="c in conversations"
             :key="c.id"
             :class="['conversation-item', { selected: activeId === c.id }]"
+            :aria-label="c.unread ? `${c.name}，${c.unread} 条未读消息` : c.name"
             @click="openChat(c.id)"
           >
             <span :class="['avatar', c.color]">{{ c.initials }}</span
@@ -1496,7 +1559,7 @@ onBeforeUnmount(() => {
                       : ""
                   }}{{ last(c)?.text || "开始一段对话" }}</span
                 ><span v-if="c.unread" class="unread-badge">{{
-                  c.unread
+                  c.unread > 99 ? "99+" : c.unread
                 }}</span></span
               ></span
             >

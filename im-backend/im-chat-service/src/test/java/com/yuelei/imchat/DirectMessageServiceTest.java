@@ -4,6 +4,7 @@ import com.yuelei.imchat.dao.MessageDao;
 import com.yuelei.imchat.dto.MessageDtos.Send;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.DirectMessage;
+import com.yuelei.imchat.model.UnreadCount;
 import com.yuelei.imchat.service.DirectMessageService;
 import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
@@ -49,5 +50,20 @@ class DirectMessageServiceTest {
         assertEquals(List.of(newer), result.messages());
         assertEquals(12L, result.nextBeforeId());
         assertThrows(ChatException.class, () -> service.history("Bearer t", 23, null, 50));
+    }
+
+    @Test
+    void unreadCountsAreScopedToTheSessionAndOnlyReceivedMessagesCanBeMarkedRead() {
+        when(access.requireUser("Bearer t")).thenReturn(23L);
+        when(dao.unreadCounts(23L)).thenReturn(List.of(new UnreadCount(9, 2)));
+        when(dao.receivedCount(23L, 9L, 42L)).thenReturn(1L);
+
+        assertEquals(List.of(new UnreadCount(9, 2)), service.unread("Bearer t"));
+        service.markRead("Bearer t", 9L, 42L);
+        verify(dao).markRead(23L, 9L, 42L);
+
+        assertThrows(ChatException.class, () -> service.markRead("Bearer t", 9L, 99L));
+        assertThrows(ChatException.class, () -> service.markRead("Bearer t", 23L, 42L));
+        verify(dao, never()).markRead(23L, 9L, 99L);
     }
 }

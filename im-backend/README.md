@@ -125,6 +125,11 @@ the caller's identity. Sending also verifies the pair is **currently** friends.
   order. Omit `beforeId` for the latest page; pass `nextBeforeId` to load older
   messages until it is null. A logged-in participant can read history after the
   friendship ends, but cannot send more messages.
+- `GET /api/chats/direct/unread` returns unread counts per sender for the
+  authenticated user. `POST /api/chats/direct/{friendId}/read` accepts
+  `{ "lastReadMessageId": 123 }` and returns HTTP 204. The message must have
+  been received from that friend; the stored read cursor only moves forward.
+  Chat Flyway V2 adds the `im_direct_read` table and recipient lookup index.
 
 Run `npm run dev` from `D:\im-assistant\im-web` after restarting Vite so its
 proxy routes `/api/chats` to 8082. Test with two registered accounts in separate
@@ -132,6 +137,11 @@ browser profiles: accept a friend request, open the friend in 联系人 → 发�
 send from A, then open that friend on B. B checks for new messages every five
 seconds while viewing the conversation. Reload each page to confirm history
 comes from MySQL, and try the same message UUID twice to check idempotency.
+While B views another conversation, send two messages from A: B's sidebar
+should show `2` beside A within five seconds. Open A's chat and wait for the
+messages to load; the badge should disappear. Reload B to confirm the read
+state persists, and repeat from a separate browser profile for multi-device
+behavior. The app polls unread counts every five seconds while visible.
 Previously opened friend conversations keep a per-account browser entry after
 removal, so either participant can still reopen their history on that browser.
 Existing example discussions and their assistant tools are still local demos;

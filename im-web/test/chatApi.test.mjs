@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadDirectMessages, sendDirectMessage } from "../src/chatApi.ts";
+import { listUnreadDirect, loadDirectMessages, markDirectRead, sendDirectMessage } from "../src/chatApi.ts";
 import { sessionKey } from "../src/authApi.ts";
 
 test("direct messages use the user's token, cursor and stable client id", async () => {
@@ -25,4 +25,21 @@ test("an empty proxy error reports its HTTP status", async () => {
   globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "alice-token" : null };
   globalThis.fetch = async () => new Response("", { status: 500 });
   await assert.rejects(loadDirectMessages(2), /HTTP 500.*8082/);
+});
+
+test("unread summary and read receipt use authenticated endpoints", async () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "alice-token" : null };
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    assert.equal(options.headers.Authorization, "Bearer alice-token");
+    return options.method === "GET"
+      ? Response.json([{ peerId: 2, unreadCount: 3 }])
+      : new Response(null, { status: 204 });
+  };
+  assert.deepEqual(await listUnreadDirect(), [{ peerId: 2, unreadCount: 3 }]);
+  assert.equal(calls[0].url, "/api/chats/direct/unread");
+  await markDirectRead(2, 41);
+  assert.equal(calls[1].url, "/api/chats/direct/2/read");
+  assert.deepEqual(JSON.parse(calls[1].options.body), { lastReadMessageId: 41 });
 });

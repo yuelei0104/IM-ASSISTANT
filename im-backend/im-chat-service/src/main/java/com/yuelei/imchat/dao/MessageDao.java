@@ -1,6 +1,7 @@
 package com.yuelei.imchat.dao;
 
 import com.yuelei.imchat.model.DirectMessage;
+import com.yuelei.imchat.model.UnreadCount;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -14,4 +15,9 @@ public interface MessageDao {
     DirectMessage byClientId(@Param("senderId") long senderId, @Param("clientMsgId") String clientMsgId);
     List<DirectMessage> history(@Param("low") long low, @Param("high") long high,
                                 @Param("beforeId") Long beforeId, @Param("limit") int limit);
+    List<UnreadCount> unreadCounts(@Param("userId") long userId);
+    long receivedCount(@Param("userId") long userId, @Param("peerId") long peerId,
+                       @Param("messageId") long messageId);
+    int markRead(@Param("userId") long userId, @Param("peerId") long peerId,
+                 @Param("messageId") long messageId);
 }

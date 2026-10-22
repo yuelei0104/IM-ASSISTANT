@@ -12,6 +12,12 @@
             <arg column="created_at" javaType="java.time.LocalDateTime"/>
         </constructor>
     </resultMap>
+    <resultMap id="unreadCount" type="com.yuelei.imchat.model.UnreadCount">
+        <constructor>
+            <idArg column="peer_id" javaType="_long"/>
+            <arg column="unread_count" javaType="_long"/>
+        </constructor>
+    </resultMap>
     <insert id="insert">
         INSERT INTO im_direct_message (user_low_id, user_high_id, sender_id, recipient_id, client_msg_id, body)
         VALUES (#{low}, #{high}, #{senderId}, #{recipientId}, #{clientMsgId}, #{body})
@@ -29,4 +35,20 @@
         ORDER BY id DESC
         LIMIT #{limit}
     </select>
+    <select id="unreadCounts" resultMap="unreadCount">
+        SELECT m.sender_id AS peer_id, COUNT(*) AS unread_count
+        FROM im_direct_message m
+        LEFT JOIN im_direct_read r ON r.user_id = #{userId} AND r.peer_id = m.sender_id
+        WHERE m.recipient_id = #{userId} AND m.id &gt; COALESCE(r.last_read_message_id, 0)
+        GROUP BY m.sender_id
+    </select>
+    <select id="receivedCount" resultType="long">
+        SELECT COUNT(*) FROM im_direct_message
+        WHERE id = #{messageId} AND recipient_id = #{userId} AND sender_id = #{peerId}
+    </select>
+    <insert id="markRead">
+        INSERT INTO im_direct_read (user_id, peer_id, last_read_message_id)
+        VALUES (#{userId}, #{peerId}, #{messageId})
+        ON DUPLICATE KEY UPDATE last_read_message_id = GREATEST(last_read_message_id, #{messageId})
+    </insert>
 </mapper>

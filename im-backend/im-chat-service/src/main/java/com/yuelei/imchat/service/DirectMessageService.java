@@ -5,6 +5,7 @@ import com.yuelei.imchat.dto.MessageDtos.Page;
 import com.yuelei.imchat.dto.MessageDtos.Send;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.DirectMessage;
+import com.yuelei.imchat.model.UnreadCount;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -47,5 +48,18 @@ public class DirectMessageService {
         Long nextBeforeId = hasOlder ? page.get(page.size() - 1).id() : null;
         Collections.reverse(page);
         return new Page(page, nextBeforeId);
+    }
+
+    public List<UnreadCount> unread(String authorization) {
+        return messages.unreadCounts(access.requireUser(authorization));
+    }
+
+    public void markRead(String authorization, long peerId, long lastReadMessageId) {
+        long userId = access.requireUser(authorization);
+        if (peerId <= 0 || peerId == userId || lastReadMessageId <= 0
+                || messages.receivedCount(userId, peerId, lastReadMessageId) != 1) {
+            throw new ChatException(HttpStatus.BAD_REQUEST, "已读消息不属于当前会话");
+        }
+        messages.markRead(userId, peerId, lastReadMessageId);
     }
 }
