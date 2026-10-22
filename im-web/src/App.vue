@@ -43,12 +43,13 @@ import {
   type ContactProfile,
   type ContactRequest,
 } from "./contactApi";
-import { connectChatSocket, listUnreadDirect, loadDirectMessages, markDirectRead, sendDirectMessage, type DirectMessage } from "./chatApi";
+import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, type DirectMessage } from "./chatApi";
 import {
   createGroupChat, getGroupMessage, inviteGroupMembers, listGroups, loadGroupMessages,
-  markGroupRead, sendGroupMessage, type GroupChat, type GroupMessage,
+  markGroupRead, sendGroupMessage, syncGroupMessages, type GroupChat, type GroupMessage,
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, type MentionNotice } from "./noticeApi";
+import { syncForward } from "./incrementalSync";
 import {
   initialState,
   selfId,
@@ -179,9 +180,11 @@ const requestsNextCursor = ref<number | null>(null);
 const knownPeers = ref<ContactProfile[]>([]);
 const loadingPeers = new Set<number>();
 const directMessages = ref<DirectMessage[]>([]);
+const directSyncCursor = ref<number | null>(null);
 const serverGroups = ref<GroupChat[]>([]);
 const groupsNextCursor = ref<number | null>(null);
 const groupMessages = ref<GroupMessage[]>([]);
+const groupSyncCursor = ref<number | null>(null);
 const groupNextBeforeId = ref<number | null>(null);
 const groupBusy = ref(false);
 let groupsSeq = 0;
@@ -252,6 +255,8 @@ watch(activeId, () => {
   stopVoice();
   directMessages.value = [];
   groupMessages.value = [];
+  directSyncCursor.value = null;
+  groupSyncCursor.value = null;
   nextBeforeId.value = null;
   groupNextBeforeId.value = null;
   chatError.value = "";
@@ -504,10 +509,22 @@ async function refreshDirectChat() {
   const sequence = ++chatSeq;
   chatBusy.value = true;
   try {
-    const result = await loadDirectMessages(peerId);
-    if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return;
-    if (!directMessages.value.length) nextBeforeId.value = result.nextBeforeId;
-    mergeDirect(result.messages);
+    if (directSyncCursor.value === null) {
+      const result = await loadDirectMessages(peerId);
+      if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return;
+      nextBeforeId.value = result.nextBeforeId;
+      mergeDirect(result.messages);
+      directSyncCursor.value = result.messages.at(-1)?.id ?? 0;
+    } else {
+      const resumed = await syncForward(directSyncCursor.value,
+        (cursor) => syncDirectMessages(peerId, cursor), (messages, cursor) => {
+          if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return false;
+          mergeDirect(messages);
+          directSyncCursor.value = cursor;
+          return true;
+        });
+      if (resumed === null) return;
+    }
     chatError.value = "";
     await nextTick();
     scrollBottom();
@@ -539,6 +556,10 @@ async function loadOlderDirect() {
     if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "加载历史失败";
   } finally {
     if (sequence === chatSeq) chatBusy.value = false;
+    if (pendingRealtimeRefresh && sequence === chatSeq) {
+      pendingRealtimeRefresh = false;
+      void refreshDirectChat();
+    }
   }
 }
 async function refreshGroups() {
@@ -608,10 +629,22 @@ async function refreshGroupChat() {
   const sequence = ++chatSeq;
   chatBusy.value = true;
   try {
-    const result = await loadGroupMessages(groupId);
-    if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return;
-    if (!groupMessages.value.length) groupNextBeforeId.value = result.nextBeforeId;
-    mergeGroup(result.messages);
+    if (groupSyncCursor.value === null) {
+      const result = await loadGroupMessages(groupId);
+      if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return;
+      groupNextBeforeId.value = result.nextBeforeId;
+      mergeGroup(result.messages);
+      groupSyncCursor.value = result.messages.at(-1)?.id ?? 0;
+    } else {
+      const resumed = await syncForward(groupSyncCursor.value,
+        (cursor) => syncGroupMessages(groupId, cursor), (messages, cursor) => {
+          if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return false;
+          mergeGroup(messages);
+          groupSyncCursor.value = cursor;
+          return true;
+        });
+      if (resumed === null) return;
+    }
     chatError.value = "";
     await nextTick();
     if (focusId.value)
@@ -645,6 +678,10 @@ async function loadOlderGroup() {
     if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "加载历史失败";
   } finally {
     if (sequence === chatSeq) chatBusy.value = false;
+    if (pendingGroupRefresh && sequence === chatSeq) {
+      pendingGroupRefresh = false;
+      void refreshGroupChat();
+    }
   }
 }
 async function refreshNotices() {
@@ -791,6 +828,8 @@ function applyAccount(account: Account) {
   knownPeers.value = loadKnownPeers(account);
   directMessages.value = [];
   groupMessages.value = [];
+  directSyncCursor.value = null;
+  groupSyncCursor.value = null;
   serverGroups.value = [];
   groupsNextCursor.value = null;
   groupLastRead.clear();
@@ -1024,6 +1063,8 @@ async function signOut() {
   knownPeers.value = [];
   directMessages.value = [];
   groupMessages.value = [];
+  directSyncCursor.value = null;
+  groupSyncCursor.value = null;
   serverGroups.value = [];
   groupsNextCursor.value = null;
   groupLastRead.clear();

@@ -2,6 +2,7 @@ package com.yuelei.imchat.controller;
 
 import com.yuelei.imchat.dto.MessageDtos.Page;
 import com.yuelei.imchat.dto.MessageDtos.Send;
+import com.yuelei.imchat.dto.MessageDtos.SyncPage;
 import com.yuelei.imchat.model.DirectMessage;
 import com.yuelei.imchat.service.DirectMessageService;
 import jakarta.validation.Valid;
@@ -26,5 +27,14 @@ public class DirectMessageController {
                         @RequestParam(required = false) Long beforeId,
                         @RequestParam(defaultValue = "50") int limit) {
         return service.history(authorization, friendId, beforeId, limit);
+    }
+
+    @GetMapping("/sync")
+    public SyncPage sync(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable long friendId,
+            @RequestParam long afterId,
+            @RequestParam(defaultValue = "50") int limit) {
+        return service.sync(authorization, friendId, afterId, limit);
     }
 }

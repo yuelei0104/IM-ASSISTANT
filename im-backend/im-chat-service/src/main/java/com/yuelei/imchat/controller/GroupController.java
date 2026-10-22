@@ -54,6 +54,13 @@ public class GroupController {
         return groups.history(auth, groupId, beforeId, limit);
     }
 
+    @GetMapping("/{groupId}/messages/sync")
+    public GroupDtos.SyncPage sync(@RequestHeader(value = "Authorization", required = false) String auth,
+                                   @PathVariable long groupId, @RequestParam long afterId,
+                                   @RequestParam(defaultValue = "50") int limit) {
+        return groups.sync(auth, groupId, afterId, limit);
+    }
+
     @GetMapping("/{groupId}/messages/{messageId}")
     public GroupMessage message(@RequestHeader(value = "Authorization", required = false) String auth,
                                 @PathVariable long groupId, @PathVariable long messageId) {

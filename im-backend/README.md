@@ -135,6 +135,12 @@ the caller's identity. Sending also verifies the pair is **currently** friends.
   order. Omit `beforeId` for the latest page; pass `nextBeforeId` to load older
   messages until it is null. A logged-in participant can read history after the
   friendship ends, but cannot send more messages.
+- `GET /api/chats/direct/{friendId}/messages/sync?afterId=123&limit=50`
+  returns ascending messages after the last applied ID and a `nextAfterId`
+  when another page exists. The client repeats until `nextAfterId` is null,
+  advancing its cursor only after applying each page. A newly opened chat
+  starts with the latest history page; older messages remain available via
+  `beforeId`.
 - `GET /api/chats/direct/unread` returns unread counts per sender for the
   authenticated user. `POST /api/chats/direct/{friendId}/read` accepts
   `{ "lastReadMessageId": 123 }` and returns HTTP 204. The message must have
@@ -170,6 +176,13 @@ removal, so either participant can still reopen their history on that browser.
 Group chats are persisted in MySQL (chat Flyway V4), with membership checks,
 50-member capacity, cursor-based history and unread counts. Inviting a new
 member sets their history cursor to the latest committed group message.
+The same forward recovery endpoint is available at
+`GET /api/chats/groups/{groupId}/messages/sync?afterId=123&limit=50`;
+it enforces membership and the member's join cursor. Flyway V6 creates a
+per-pair lock table for direct sends, so concurrent writes to one conversation
+commit in ID order. Group sends already serialize on the group row. The
+forward cursor is kept in the active browser tab; reopening a conversation
+loads its latest history page.
 Chat Flyway V5 creates `im_group_mention_notice`. A group message can include
 `mentionedUserIds` (up to 10 current members other than the sender). Sending
 the same `clientMsgId` again with the same body and mentions returns the

@@ -23,6 +23,14 @@
         VALUES (#{low}, #{high}, #{senderId}, #{recipientId}, #{clientMsgId}, #{body})
         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
     </insert>
+    <insert id="ensurePair">
+        INSERT IGNORE INTO im_direct_pair_lock (user_low_id, user_high_id)
+        VALUES (#{low}, #{high})
+    </insert>
+    <select id="lockPair" resultType="int">
+        SELECT 1 FROM im_direct_pair_lock
+        WHERE user_low_id = #{low} AND user_high_id = #{high} FOR UPDATE
+    </select>
     <insert id="trackInbox">
         INSERT IGNORE INTO im_direct_inbox (user_id, peer_id) VALUES (#{userId}, #{peerId})
     </insert>
@@ -36,6 +44,13 @@
         WHERE user_low_id = #{low} AND user_high_id = #{high}
         <if test="beforeId != null">AND id &lt; #{beforeId}</if>
         ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+    <select id="after" resultMap="message">
+        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at
+        FROM im_direct_message FORCE INDEX (idx_direct_pair_history)
+        WHERE user_low_id = #{low} AND user_high_id = #{high} AND id &gt; #{afterId}
+        ORDER BY id ASC
         LIMIT #{limit}
     </select>
     <select id="unreadCounts" resultMap="unreadCount">

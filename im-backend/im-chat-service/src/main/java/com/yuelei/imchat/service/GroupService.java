@@ -135,6 +135,17 @@ public class GroupService {
         return new GroupDtos.Page(page, next);
     }
 
+    public GroupDtos.SyncPage sync(String authorization, long groupId, long afterId, int limit) {
+        long user = access.requireUser(authorization);
+        if (afterId < 0 || limit < 1 || limit > 50)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "增量游标无效");
+        var membership = requireMember(groupId, user);
+        List<GroupMessage> rows = dao.after(groupId, membership.joinedAfterId(), afterId, limit + 1);
+        boolean hasMore = rows.size() > limit;
+        List<GroupMessage> page = rows.subList(0, Math.min(limit, rows.size()));
+        return new GroupDtos.SyncPage(page, hasMore ? page.get(page.size() - 1).id() : null);
+    }
+
     public GroupMessage message(String authorization, long groupId, long messageId) {
         long userId = access.requireUser(authorization);
         var membership = requireMember(groupId, userId);

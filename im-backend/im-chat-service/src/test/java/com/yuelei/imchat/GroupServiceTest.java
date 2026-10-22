@@ -58,6 +58,14 @@ class GroupServiceTest {
         when(dao.membership(4, 10)).thenReturn(new GroupDao.Membership(42, 42));
         service.history("Bearer member", 4, null, 50);
         verify(dao).history(4, 42, null, 51);
+        when(dao.after(4, 42, 40, 2)).thenReturn(List.of(
+                new GroupMessage(43, 4, 9, ID, "新消息", LocalDateTime.now()),
+                new GroupMessage(44, 4, 9, ID, "后续", LocalDateTime.now())));
+        var recovered = service.sync("Bearer member", 4, 40, 1);
+        assertEquals(List.of(43L), recovered.messages().stream().map(GroupMessage::id).toList());
+        assertEquals(43L, recovered.nextAfterId());
+        verify(dao).after(4, 42, 40, 2);
+        assertThrows(ChatException.class, () -> service.sync("Bearer member", 4, -1, 1));
         assertThrows(ChatException.class, () -> service.markRead("Bearer member", 4, 40));
         verify(dao, never()).validMessage(4, 40, 42);
         when(dao.validMessage(4, 43, 42)).thenReturn(null);

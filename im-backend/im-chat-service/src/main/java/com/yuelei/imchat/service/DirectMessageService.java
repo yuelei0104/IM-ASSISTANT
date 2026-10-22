@@ -3,6 +3,7 @@ package com.yuelei.imchat.service;
 import com.yuelei.imchat.dao.MessageDao;
 import com.yuelei.imchat.dto.MessageDtos.Page;
 import com.yuelei.imchat.dto.MessageDtos.Send;
+import com.yuelei.imchat.dto.MessageDtos.SyncPage;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.DirectMessage;
 import com.yuelei.imchat.model.UnreadCount;
@@ -33,6 +34,9 @@ public class DirectMessageService {
         long senderId = access.requireFriend(authorization, friendId);
         String body = input.body().trim();
         if (body.isEmpty()) throw new ChatException(HttpStatus.BAD_REQUEST, "消息不能为空");
+        // Keep each pair's IDs in commit order, including concurrent sends from both users.
+        messages.ensurePair(Math.min(senderId, friendId), Math.max(senderId, friendId));
+        messages.lockPair(Math.min(senderId, friendId), Math.max(senderId, friendId));
         messages.insert(Math.min(senderId, friendId), Math.max(senderId, friendId),
                 senderId, friendId, input.clientMsgId(), body);
         DirectMessage saved = messages.byClientId(senderId, input.clientMsgId());
@@ -55,6 +59,17 @@ public class DirectMessageService {
         Long nextBeforeId = hasOlder ? page.get(page.size() - 1).id() : null;
         Collections.reverse(page);
         return new Page(page, nextBeforeId);
+    }
+
+    public SyncPage sync(String authorization, long friendId, long afterId, int limit) {
+        long userId = access.requireUser(authorization);
+        if (friendId <= 0 || friendId == userId || afterId < 0 || limit < 1 || limit > 50)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "增量游标无效");
+        List<DirectMessage> rows = messages.after(Math.min(userId, friendId),
+                Math.max(userId, friendId), afterId, limit + 1);
+        boolean hasMore = rows.size() > limit;
+        List<DirectMessage> page = rows.subList(0, Math.min(limit, rows.size()));
+        return new SyncPage(page, hasMore ? page.get(page.size() - 1).id() : null);
     }
 
     public List<UnreadCount> unread(String authorization) {

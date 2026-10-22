@@ -11,4 +11,5 @@ public final class MessageDtos {
                        @NotBlank @Size(max = 4000) String body) { }
 
     public record Page(java.util.List<com.yuelei.imchat.model.DirectMessage> messages, Long nextBeforeId) { }
+    public record SyncPage(java.util.List<com.yuelei.imchat.model.DirectMessage> messages, Long nextAfterId) { }
 }

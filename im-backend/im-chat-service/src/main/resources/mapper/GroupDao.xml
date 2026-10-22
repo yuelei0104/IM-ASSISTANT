@@ -81,6 +81,12 @@
         <if test="beforeId != null">AND id &lt; #{beforeId}</if>
         ORDER BY id DESC LIMIT #{limit}
     </select>
+    <select id="after" resultMap="groupMessage">
+        SELECT id, group_id, sender_id, client_msg_id, body, created_at
+        FROM im_group_message FORCE INDEX (idx_group_history)
+        WHERE group_id = #{groupId} AND id &gt; GREATEST(#{joinedAfterId}, #{afterId})
+        ORDER BY id ASC LIMIT #{limit}
+    </select>
     <select id="validMessage" resultType="long">
         SELECT id FROM im_group_message
         WHERE group_id = #{groupId} AND id = #{messageId} AND id &gt; #{joinedAfterId}

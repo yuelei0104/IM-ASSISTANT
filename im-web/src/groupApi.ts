@@ -16,6 +16,7 @@ export type GroupMessage = {
   createdAt: string;
 };
 export type GroupPage = { messages: GroupMessage[]; nextBeforeId: number | null };
+export type GroupSyncPage = { messages: GroupMessage[]; nextAfterId: number | null };
 export type GroupsPage = { items: GroupChat[]; nextBeforeId: number | null };
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
@@ -49,6 +50,8 @@ export const inviteGroupMembers = (id: number, friendIds: number[]) =>
   request<GroupChat>(`/${id}/members`, { friendIds });
 export const loadGroupMessages = (id: number, beforeId?: number) =>
   request<GroupPage>(`/${id}/messages?limit=50${beforeId ? `&beforeId=${beforeId}` : ""}`);
+export const syncGroupMessages = (id: number, afterId: number) =>
+  request<GroupSyncPage>(`/${id}/messages/sync?afterId=${afterId}&limit=50`);
 export const getGroupMessage = (id: number, messageId: number) =>
   request<GroupMessage>(`/${id}/messages/${messageId}`);
 export const sendGroupMessage = (id: number, clientMsgId: string, body: string, mentionedUserIds: number[] = []) =>

@@ -9,6 +9,7 @@ export type DirectMessage = {
   createdAt: string;
 };
 export type MessagePage = { messages: DirectMessage[]; nextBeforeId: number | null };
+export type DirectSyncPage = { messages: DirectMessage[]; nextAfterId: number | null };
 export type UnreadCount = { peerId: number; unreadCount: number };
 
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
@@ -48,6 +49,10 @@ async function request<T>(path: string, body?: object): Promise<T> {
 export function loadDirectMessages(peerId: number, beforeId?: number) {
   const query = beforeId ? `?beforeId=${beforeId}&limit=50` : "?limit=50";
   return request<MessagePage>(`/${peerId}/messages${query}`);
+}
+
+export function syncDirectMessages(peerId: number, afterId: number) {
+  return request<DirectSyncPage>(`/${peerId}/messages/sync?afterId=${afterId}&limit=50`);
 }
 
 export function sendDirectMessage(peerId: number, clientMsgId: string, body: string) {

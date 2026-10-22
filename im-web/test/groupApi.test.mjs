@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createGroupChat, inviteGroupMembers, listGroups, loadGroupMessages,
-  markGroupRead, sendGroupMessage,
+  markGroupRead, sendGroupMessage, syncGroupMessages,
 } from "../src/groupApi.ts";
 import { sessionKey } from "../src/authApi.ts";
 
@@ -20,16 +20,18 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   await createGroupChat("讨论", [2, 3]);
   await inviteGroupMembers(4, [5]);
   await loadGroupMessages(4, 31);
+  await syncGroupMessages(4, 31);
   await sendGroupMessage(4, "e9873e73-1326-4329-a4c0-936912a48e37", "你好");
   await markGroupRead(4, 34);
   assert.equal(calls[0].url, "/api/chats/groups?limit=50&beforeId=12");
   assert.deepEqual(JSON.parse(calls[1].options.body), { name: "讨论", friendIds: [2, 3] });
   assert.deepEqual(JSON.parse(calls[2].options.body), { friendIds: [5] });
   assert.equal(calls[3].url, "/api/chats/groups/4/messages?limit=50&beforeId=31");
-  assert.deepEqual(JSON.parse(calls[4].options.body), {
+  assert.equal(calls[4].url, "/api/chats/groups/4/messages/sync?afterId=31&limit=50");
+  assert.deepEqual(JSON.parse(calls[5].options.body), {
     clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e37", body: "你好", mentionedUserIds: [],
   });
-  assert.deepEqual(JSON.parse(calls[5].options.body), { lastReadMessageId: 34 });
+  assert.deepEqual(JSON.parse(calls[6].options.body), { lastReadMessageId: 34 });
 });
 
 test("group requests fail without a session before touching the network", async () => {

@@ -30,6 +30,10 @@ class DirectMessageServiceTest {
         when(dao.byClientId(23, ID)).thenReturn(stored);
 
         assertEquals(stored, service.send("Bearer t", 9, new Send(ID, " 你好 ")));
+        var ordered = inOrder(dao);
+        ordered.verify(dao).ensurePair(9, 23);
+        ordered.verify(dao).lockPair(9, 23);
+        ordered.verify(dao).insert(9, 23, 23, 9, ID, "你好");
         verify(dao).insert(9, 23, 23, 9, ID, "你好");
         verify(dao).trackInbox(9, 23);
         verify(events).publishEvent(stored);
@@ -55,6 +59,21 @@ class DirectMessageServiceTest {
         assertEquals(List.of(newer), result.messages());
         assertEquals(12L, result.nextBeforeId());
         assertThrows(ChatException.class, () -> service.history("Bearer t", 23, null, 50));
+    }
+
+    @Test
+    void syncPaginatesForwardWithinTheAuthenticatedPair() {
+        when(access.requireUser("Bearer t")).thenReturn(23L);
+        var first = new DirectMessage(12, 9, 23, ID, "一", LocalDateTime.now());
+        var second = new DirectMessage(13, 23, 9, ID, "二", LocalDateTime.now());
+        when(dao.after(9, 23, 11, 2)).thenReturn(List.of(first, second));
+        var result = service.sync("Bearer t", 9, 11, 1);
+        assertEquals(List.of(first), result.messages());
+        assertEquals(12L, result.nextAfterId());
+        verify(dao).after(9, 23, 11, 2);
+        assertThrows(ChatException.class, () -> service.sync("Bearer t", 23, 11, 1));
+        assertThrows(ChatException.class, () -> service.sync("Bearer t", 9, -1, 1));
+        assertThrows(ChatException.class, () -> service.sync("Bearer t", 9, 11, 51));
     }
 
     @Test
