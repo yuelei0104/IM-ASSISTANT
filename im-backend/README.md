@@ -216,3 +216,13 @@ remote model URL can be configured. The service sends only the current
 member's latest 30 eligible messages (each capped at 500 characters) to that
 local endpoint; model failures return a generic error without message text.
 Ensure the selected model runs locally rather than using Ollama cloud models.
+
+### Personal tasks
+
+Chat Flyway V8 creates `im_personal_task`. `GET /api/chats/tasks?limit=50&beforeId=123`
+returns a cursor page and open/completed totals for the signed-in user.
+`POST /api/chats/tasks` accepts `{ "title": "跟进会议" }`; `PATCH /api/chats/tasks/{id}`
+accepts `{ "completed": true }`; `DELETE /api/chats/tasks/{id}` removes an item.
+All requests require the bearer session; SQL reads and writes are scoped to its
+user ID. Tasks are personal, not shared with group members. The feature needs
+MySQL and the user service, but does not require an AI model.

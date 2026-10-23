@@ -305,32 +305,7 @@ export function initialState(): DemoState {
         state: "pending",
       },
     ],
-    todos: [
-      {
-        id: "t1",
-        title: "整理好友申请与拉群流程",
-        due: "今天",
-        done: false,
-        sourceId: "p2",
-        sourceConversationId: "product",
-      },
-      {
-        id: "t2",
-        title: "检查语音转写入口和字幕状态",
-        due: "明天",
-        done: false,
-        sourceId: "p7",
-        sourceConversationId: "product",
-      },
-      {
-        id: "t3",
-        title: "梳理会话列表的空状态",
-        due: "昨天",
-        done: true,
-        sourceId: "l1",
-        sourceConversationId: "lin-chat",
-      },
-    ],
+    todos: [],
     notices: [
       {
         id: "n1",

@@ -50,12 +50,12 @@ import {
   type GroupChat, type GroupMessage, type GroupSummary,
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, type MentionNotice } from "./noticeApi";
+import { listTasks, createTask, completeTask, deleteTask, type PersonalTask } from "./taskApi";
 import { syncForward } from "./incrementalSync";
 import { resumeCursor, savedCursor, saveCursor } from "./syncCursor";
 import {
   initialState,
   selfId,
-  uid,
   type Conversation,
   type DemoState,
   type Message,
@@ -70,7 +70,11 @@ function load(account: Account | null): DemoState {
     const saved = localStorage.getItem(accountStateKey(account.id));
     if (saved) {
       const v = JSON.parse(saved);
-      if (v.people && v.conversations && v.preferences) return v;
+      if (v.people && v.conversations && v.preferences) {
+        // Legacy demo tasks are deliberately not imported as real server tasks.
+        v.todos = [];
+        return v;
+      }
     }
   } catch {}
   return initialState();
@@ -169,6 +173,14 @@ const toast = ref("");
 const range = ref<"recent" | "all">("recent");
 const showSummary = ref(false);
 const taskDraft = ref("");
+const personalTasks = ref<PersonalTask[]>([]);
+const taskNextBeforeId = ref<number | null>(null);
+const taskOpenCount = ref(0);
+const taskCompletedCount = ref(0);
+const taskLoading = ref(false);
+const taskSaving = ref(false);
+const taskError = ref("");
+let taskSeq = 0;
 const groupName = ref("");
 const inviteIds = ref<string[]>([]);
 const friendSearchType = ref<"phone" | "handle">("phone");
@@ -283,6 +295,7 @@ watch(page, () => {
   if (page.value === "contacts" || page.value === "requests")
     void refreshContacts();
   if (page.value === "notices") void refreshNotices();
+  if (page.value === "tasks") void refreshTasks();
   if (page.value === "chat" && directPeer(activeId.value)) void refreshDirectChat();
   if (page.value === "chat" && serverGroupId(activeId.value)) void refreshGroupChat();
 });
@@ -371,9 +384,7 @@ const sent = computed(() =>
   contactRequests.value.filter((r) => r.fromId === currentAccount.value?.id),
 );
 const unread = computed(() => noticeUnreadCount.value);
-const openTasks = computed(
-  () => data.value.todos.filter((t) => !t.done).length,
-);
+const openTasks = computed(() => taskOpenCount.value);
 const canWrite = computed(
   () =>
     !!active.value &&
@@ -886,6 +897,14 @@ function applyAccount(account: Account) {
   summaryBusy.value = false;
   summaryError.value = "";
   summarySeq++;
+  taskSeq++;
+  personalTasks.value = [];
+  taskNextBeforeId.value = null;
+  taskOpenCount.value = 0;
+  taskCompletedCount.value = 0;
+  taskLoading.value = false;
+  taskSaving.value = false;
+  taskError.value = "";
   directSyncCursor.value = null;
   groupSyncCursor.value = null;
   serverGroups.value = [];
@@ -913,6 +932,7 @@ function applyAccount(account: Account) {
   void refreshUnread();
   void refreshGroups();
   void refreshNotices();
+  void refreshTasks();
   chatSocket = connectChatSocket(onChatEvent);
   nextTick(scrollBottom);
 }
@@ -1125,6 +1145,14 @@ async function signOut() {
   summaryBusy.value = false;
   summaryError.value = "";
   summarySeq++;
+  taskSeq++;
+  personalTasks.value = [];
+  taskNextBeforeId.value = null;
+  taskOpenCount.value = 0;
+  taskCompletedCount.value = 0;
+  taskLoading.value = false;
+  taskSaving.value = false;
+  taskError.value = "";
   directSyncCursor.value = null;
   groupSyncCursor.value = null;
   serverGroups.value = [];
@@ -1371,26 +1399,115 @@ async function readAllNotices() {
     noticeError.value = error instanceof Error ? error.message : "标记失败";
   }
 }
-function addTask() {
+async function refreshTasks(beforeId?: number) {
+  const accountId = currentAccount.value?.id;
+  if (!accountId || taskLoading.value || taskSaving.value) return;
+  const sequence = ++taskSeq;
+  taskLoading.value = true;
+  taskError.value = "";
+  try {
+    const result = await listTasks(beforeId);
+    if (sequence !== taskSeq || currentAccount.value?.id !== accountId) return;
+    if (beforeId) {
+      const existing = new Map(personalTasks.value.map((task) => [task.id, task]));
+      for (const task of result.items) existing.set(task.id, task);
+      personalTasks.value = [...existing.values()].sort((a, b) => b.id - a.id);
+    } else {
+      personalTasks.value = result.items;
+    }
+    taskNextBeforeId.value = result.nextBeforeId;
+    taskOpenCount.value = result.openCount;
+    taskCompletedCount.value = result.completedCount;
+  } catch (error) {
+    if (sequence === taskSeq && currentAccount.value?.id === accountId)
+      taskError.value = error instanceof Error ? error.message : "待办加载失败";
+  } finally {
+    if (sequence === taskSeq) taskLoading.value = false;
+  }
+}
+async function addTask() {
   const title = taskDraft.value.trim();
-  if (!title) return;
-  data.value.todos.unshift({
-    id: uid("t"),
-    title,
-    due: "待安排",
-    done: false,
-    sourceConversationId: page.value === "chat" ? activeId.value : undefined,
-    sourceId: page.value === "chat" ? messages.value.at(-1)?.id : undefined,
-  });
-  taskDraft.value = "";
-  page.value = "tasks";
-  notify("待办已创建");
+  const accountId = currentAccount.value?.id;
+  if (!title || title.length > 100 || !accountId || taskSaving.value) return;
+  taskSaving.value = true;
+  const sequence = ++taskSeq;
+  taskLoading.value = false;
+  taskError.value = "";
+  let savedOk = false;
+  try {
+    const saved = await createTask(title);
+    if (sequence !== taskSeq || currentAccount.value?.id !== accountId) return;
+    personalTasks.value.unshift(saved);
+    taskOpenCount.value++;
+    taskDraft.value = "";
+    page.value = "tasks";
+    savedOk = true;
+    notify("待办已创建");
+  } catch (error) {
+    if (sequence === taskSeq && currentAccount.value?.id === accountId)
+      taskError.value = error instanceof Error ? error.message : "待办创建失败";
+  } finally {
+    if (sequence === taskSeq && currentAccount.value?.id === accountId) {
+      taskSaving.value = false;
+      if (savedOk) void refreshTasks();
+    }
+  }
+}
+async function toggleTask(task: PersonalTask) {
+  const accountId = currentAccount.value?.id;
+  if (!accountId || taskSaving.value) return;
+  taskSaving.value = true;
+  const sequence = ++taskSeq;
+  taskLoading.value = false;
+  taskError.value = "";
+  let savedOk = false;
+  try {
+    const saved = await completeTask(task.id, !task.completed);
+    if (sequence !== taskSeq || currentAccount.value?.id !== accountId) return;
+    personalTasks.value = personalTasks.value.map((item) => item.id === saved.id ? saved : item);
+    taskOpenCount.value += saved.completed ? -1 : 1;
+    taskCompletedCount.value += saved.completed ? 1 : -1;
+    savedOk = true;
+  } catch (error) {
+    if (sequence === taskSeq && currentAccount.value?.id === accountId)
+      taskError.value = error instanceof Error ? error.message : "待办更新失败";
+  } finally {
+    if (sequence === taskSeq && currentAccount.value?.id === accountId) {
+      taskSaving.value = false;
+      if (savedOk) void refreshTasks();
+    }
+  }
+}
+async function removeTask(task: PersonalTask) {
+  const accountId = currentAccount.value?.id;
+  if (!accountId || taskSaving.value) return;
+  taskSaving.value = true;
+  const sequence = ++taskSeq;
+  taskLoading.value = false;
+  taskError.value = "";
+  let savedOk = false;
+  try {
+    await deleteTask(task.id);
+    if (sequence !== taskSeq || currentAccount.value?.id !== accountId) return;
+    personalTasks.value = personalTasks.value.filter((item) => item.id !== task.id);
+    if (task.completed) taskCompletedCount.value--;
+    else taskOpenCount.value--;
+    savedOk = true;
+  } catch (error) {
+    if (sequence === taskSeq && currentAccount.value?.id === accountId)
+      taskError.value = error instanceof Error ? error.message : "待办删除失败";
+  } finally {
+    if (sequence === taskSeq && currentAccount.value?.id === accountId) {
+      taskSaving.value = false;
+      if (savedOk) void refreshTasks();
+    }
+  }
 }
 function reset() {
-  if (!confirm("重置本地待办、通知和偏好演示数据？")) return;
+  if (!confirm("重置本地演示数据和偏好？服务端待办不会删除。")) return;
   data.value = initialState();
   activeId.value = allConversations.value[0]?.id || "";
-  notify("本地演示数据已重置，服务端聊天记录不受影响");
+  notify("本地演示数据已重置，服务端待办和聊天记录不受影响");
 }
 function stopVoice() {
   if (recognition) {
@@ -2304,7 +2421,7 @@ onBeforeUnmount(() => {
               @keydown.enter="addTask"
             /><button
               class="soft-button"
-              :disabled="!taskDraft.trim()"
+              :disabled="!taskDraft.trim() || taskSaving"
               @click="addTask"
             >
               <AppIcon name="plus" :size="15" /> 确认创建待办
@@ -2563,10 +2680,7 @@ onBeforeUnmount(() => {
           <div class="stat-card">
             <span>已完成</span
             ><strong>{{
-              data.todos
-                .filter((t) => t.done)
-                .length.toString()
-                .padStart(2, "0")
+              taskCompletedCount.toString().padStart(2, "0")
             }}</strong
             ><small>每一步都值得记录</small>
           </div>
@@ -2574,7 +2688,7 @@ onBeforeUnmount(() => {
         <div class="content-card">
           <div class="card-heading">
             <h2>我的待办</h2>
-            <span>共 {{ data.todos.length }} 项</span>
+            <span>共 {{ taskOpenCount + taskCompletedCount }} 项</span>
           </div>
           <div class="add-task">
             <AppIcon name="plus" :size="18" /><input
@@ -2583,41 +2697,43 @@ onBeforeUnmount(() => {
               aria-label="新待办标题"
               placeholder="添加一项待办，按 Enter 确认"
               @keydown.enter="addTask"
-            /><button :disabled="!taskDraft.trim()" @click="addTask">
+            /><button :disabled="!taskDraft.trim() || taskSaving" @click="addTask">
               添加
             </button>
           </div>
           <div
-            v-for="t in data.todos"
+            v-for="t in personalTasks"
             :key="t.id"
-            :class="['todo-row', { done: t.done }]"
+            :class="['todo-row', { done: t.completed }]"
           >
             <label class="todo-label"
               ><input
-                v-model="t.done"
+                :checked="t.completed"
+                :disabled="taskSaving"
+                @change="toggleTask(t)"
                 type="checkbox"
                 :aria-label="`完成 ${t.title}`"
               /><span class="custom-check"
                 ><AppIcon name="check" :size="13" /></span
               ><span>{{ t.title }}</span></label
-            ><span class="due">{{ t.due }}</span
-            ><button
-              v-if="t.sourceConversationId"
-              class="source-small"
-              @click="openChat(t.sourceConversationId!, t.sourceId)"
-            >
-              查看来源 <AppIcon name="arrowUpRight" :size="14" /></button
+            ><span class="due">{{ new Date(t.createdAt).toLocaleDateString("zh-CN") }}</span
             ><button
               class="icon-button subdued"
               :aria-label="`删除 ${t.title}`"
-              @click="data.todos = data.todos.filter((x) => x.id !== t.id)"
+              :disabled="taskSaving"
+              @click="removeTask(t)"
             >
               <AppIcon name="trash" :size="16" />
             </button>
           </div>
-          <div v-if="!data.todos.length" class="empty-state">
+          <p v-if="taskError" class="error-text" role="alert">{{ taskError }}</p>
+          <button v-if="taskError && !taskLoading" class="text-button" @click="refreshTasks()">重试加载</button>
+          <div v-if="taskLoading && !personalTasks.length" class="empty-state">正在加载待办…</div>
+          <div v-else-if="!personalTasks.length && !taskError" class="empty-state">
             一切都安排好了
           </div>
+          <button v-if="taskNextBeforeId" class="text-button" :disabled="taskLoading || taskSaving"
+            @click="refreshTasks(taskNextBeforeId)">加载更早待办</button>
         </div>
       </div>
       <div v-if="page === 'settings'" class="page-content settings-content">
@@ -2807,7 +2923,7 @@ onBeforeUnmount(() => {
         <div class="content-card danger-card">
           <div>
             <strong>演示数据</strong>
-            <p>仅待办、通知和偏好保存在此浏览器本地；聊天记录保存在服务端。</p>
+            <p>待办和聊天记录保存在服务端；界面偏好及部分演示内容保存在本地。</p>
           </div>
           <button class="outline-button" @click="reset">重置演示数据</button>
         </div>
