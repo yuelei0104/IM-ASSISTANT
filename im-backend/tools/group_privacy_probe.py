@@ -36,7 +36,7 @@ def loopback_url(value):
     return value.rstrip("/")
 
 
-def call(base, path, token=None, body=None, method=None):
+def call(base, path, token=None, body=None, method=None, timeout=12):
     headers = {"Accept": "application/json"}
     if token:
         headers["Authorization"] = "Bearer " + token
@@ -47,7 +47,7 @@ def call(base, path, token=None, body=None, method=None):
     request = Request(base + path, data=data, headers=headers,
                       method=method or ("POST" if body is not None else "GET"))
     try:
-        with OPENER.open(request, timeout=12) as response:
+        with OPENER.open(request, timeout=timeout) as response:
             status = response.status
             raw = response.read()
     except HTTPError as error:
@@ -143,7 +143,7 @@ def main():
     summary_id = None
     if args.check_summary:
         summary = expect("generate pre-join summary",
-                         call(args.chat_url, path + "/summaries", a, body={}), 200)
+                         call(args.chat_url, path + "/summaries", a, body={}, timeout=60), 200)
         summary_id = summary["id"]
 
     expect("invite newcomer", call(args.chat_url, path + "/members", a,
