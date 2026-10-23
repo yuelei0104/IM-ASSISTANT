@@ -55,6 +55,10 @@ export function syncDirectMessages(peerId: number, afterId: number) {
   return request<DirectSyncPage>(`/${peerId}/messages/sync?afterId=${afterId}&limit=50`);
 }
 
+export function searchDirectMessages(peerId: number, query: string, beforeId?: number) {
+  return request<MessagePage>(`/${peerId}/messages/search?q=${encodeURIComponent(query)}&limit=20${beforeId ? `&beforeId=${beforeId}` : ""}`);
+}
+
 export function sendDirectMessage(peerId: number, clientMsgId: string, body: string) {
   return request<DirectMessage>(`/${peerId}/messages`, { clientMsgId, body });
 }

@@ -90,4 +90,18 @@ class DirectMessageServiceTest {
         assertThrows(ChatException.class, () -> service.markRead("Bearer t", 23L, 42L));
         verify(dao, never()).markRead(23L, 9L, 99L);
     }
+    @Test
+    void searchIsScopedToAuthenticatedPairAndEscapesLikeWildcards() {
+        when(access.requireUser("Bearer t")).thenReturn(23L);
+        var newer = new DirectMessage(12, 23, 9, ID, "100%_完成", LocalDateTime.now());
+        var older = new DirectMessage(11, 9, 23, ID, "100%_回顾", LocalDateTime.now());
+        when(dao.search(9, 23, "100=%=_", null, 2)).thenReturn(List.of(newer, older));
+        var page = service.search("Bearer t", 9, " 100%_ ", null, 1);
+        assertEquals(List.of(newer), page.messages());
+        assertEquals(12L, page.nextBeforeId());
+        verify(dao).search(9, 23, "100=%=_", null, 2);
+        assertThrows(ChatException.class, () -> service.search("Bearer t", 23, "关键词", null, 20));
+        assertThrows(ChatException.class, () -> service.search("Bearer t", 9, "%", null, 20));
+        verify(dao, times(1)).search(anyLong(), anyLong(), any(), any(), anyInt());
+    }
 }

@@ -457,6 +457,42 @@ svg {
   display: flex;
   gap: 6px;
 }
+.history-search {
+  flex: none;
+  padding: 14px 24px;
+  background: #fff;
+  border-bottom: 1px solid #e7e8f1;
+}
+.history-search-heading,
+.history-search-form,
+.history-result > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.history-search-form { margin-top: 10px; }
+.history-search-form input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #d9deea;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.history-search-form button {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 15px;
+  background: #555ec0;
+  color: white;
+  cursor: pointer;
+}
+.history-search-form button:disabled { opacity: .55; cursor: not-allowed; }
+.history-results { max-height: 260px; overflow-y: auto; margin-top: 10px; }
+.history-result { padding: 11px 0; border-bottom: 1px solid #eceef5; }
+.history-result time { color: #7d8498; font-size: 11px; }
+.history-result p { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.history-empty { padding: 12px 0; color: #7d8498; }
 .chat-notice {
   min-height: 35px;
   background: #f0f8f7;

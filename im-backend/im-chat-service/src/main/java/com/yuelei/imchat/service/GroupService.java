@@ -146,6 +146,17 @@ public class GroupService {
         return new GroupDtos.SyncPage(page, hasMore ? page.get(page.size() - 1).id() : null);
     }
 
+    public GroupDtos.Page search(String authorization, long groupId, String query, Long beforeId, int limit) {
+        long user = access.requireUser(authorization);
+        if (beforeId != null && beforeId <= 0 || limit < 1 || limit > 50)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "分页参数无效");
+        var membership = requireMember(groupId, user);
+        String pattern = SearchTerm.pattern(query);
+        List<GroupMessage> rows = dao.search(groupId, membership.joinedAfterId(), pattern, beforeId, limit + 1);
+        List<GroupMessage> page = List.copyOf(rows.subList(0, Math.min(rows.size(), limit)));
+        return new GroupDtos.Page(page, rows.size() > limit ? page.get(page.size() - 1).id() : null);
+    }
+
     public GroupMessage message(String authorization, long groupId, long messageId) {
         long userId = access.requireUser(authorization);
         var membership = requireMember(groupId, userId);

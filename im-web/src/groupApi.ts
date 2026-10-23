@@ -61,6 +61,8 @@ export const loadGroupMessages = (id: number, beforeId?: number) =>
   request<GroupPage>(`/${id}/messages?limit=50${beforeId ? `&beforeId=${beforeId}` : ""}`);
 export const syncGroupMessages = (id: number, afterId: number) =>
   request<GroupSyncPage>(`/${id}/messages/sync?afterId=${afterId}&limit=50`);
+export const searchGroupMessages = (id: number, query: string, beforeId?: number) =>
+  request<GroupPage>(`/${id}/messages/search?q=${encodeURIComponent(query)}&limit=20${beforeId ? `&beforeId=${beforeId}` : ""}`);
 export const getGroupMessage = (id: number, messageId: number) =>
   request<GroupMessage>(`/${id}/messages/${messageId}`);
 export const sendGroupMessage = (id: number, clientMsgId: string, body: string, mentionedUserIds: number[] = []) =>

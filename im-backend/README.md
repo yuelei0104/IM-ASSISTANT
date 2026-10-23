@@ -105,6 +105,15 @@ Stop the service with Ctrl+C in its terminal.
 
 ## One-to-one messages (local development)
 
+Search within an authenticated conversation using
+`GET /api/chats/direct/{friendId}/messages/search?q=keyword&limit=20&beforeId=123`
+or `GET /api/chats/groups/{groupId}/messages/search` with the same parameters.
+The query is 2–50 characters; `%`, `_`, and `=` are treated literally. Search
+is paged newest first, never spans conversations, and group results are limited
+to messages newer than the caller's join cursor. The query uses the existing
+conversation history index and a substring `LIKE` filter; for very large
+conversations, a dedicated search index will be needed.
+
 Start MySQL and Redis, then keep `im-user-service` running on 8081. In a **new**
 PowerShell window from `D:\im-assistant\im-backend`, set the same MySQL password
 and start chat on 8082:

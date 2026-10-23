@@ -18,6 +18,9 @@ public interface MessageDao {
     DirectMessage byClientId(@Param("senderId") long senderId, @Param("clientMsgId") String clientMsgId);
     List<DirectMessage> history(@Param("low") long low, @Param("high") long high,
                                 @Param("beforeId") Long beforeId, @Param("limit") int limit);
+    List<DirectMessage> search(@Param("low") long low, @Param("high") long high,
+                               @Param("pattern") String pattern, @Param("beforeId") Long beforeId,
+                               @Param("limit") int limit);
     List<DirectMessage> after(@Param("low") long low, @Param("high") long high,
                               @Param("afterId") long afterId, @Param("limit") int limit);
     List<UnreadCount> unreadCounts(@Param("userId") long userId);

@@ -72,6 +72,17 @@ public class DirectMessageService {
         return new SyncPage(page, hasMore ? page.get(page.size() - 1).id() : null);
     }
 
+    public Page search(String authorization, long friendId, String query, Long beforeId, int limit) {
+        long userId = access.requireUser(authorization);
+        if (friendId <= 0 || friendId == userId || beforeId != null && beforeId <= 0 || limit < 1 || limit > 50)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "分页参数无效");
+        String pattern = SearchTerm.pattern(query);
+        List<DirectMessage> rows = messages.search(Math.min(userId, friendId), Math.max(userId, friendId),
+                pattern, beforeId, limit + 1);
+        List<DirectMessage> page = List.copyOf(rows.subList(0, Math.min(rows.size(), limit)));
+        return new Page(page, rows.size() > limit ? page.get(page.size() - 1).id() : null);
+    }
+
     public List<UnreadCount> unread(String authorization) {
         return messages.unreadCounts(access.requireUser(authorization));
     }

@@ -37,4 +37,12 @@ public class DirectMessageController {
             @RequestParam(defaultValue = "50") int limit) {
         return service.sync(authorization, friendId, afterId, limit);
     }
+
+    @GetMapping("/search")
+    public Page search(@RequestHeader(value = "Authorization", required = false) String authorization,
+                       @PathVariable long friendId, @RequestParam String q,
+                       @RequestParam(required = false) Long beforeId,
+                       @RequestParam(defaultValue = "20") int limit) {
+        return service.search(authorization, friendId, q, beforeId, limit);
+    }
 }

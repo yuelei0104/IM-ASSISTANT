@@ -113,4 +113,19 @@ class GroupServiceTest {
         verify(dao, times(1)).insertMessage(4, 9, ID, "@伙伴#10 请看");
         verifyNoMoreInteractions(events);
     }
+    @Test
+    void searchRequiresMembershipAndPassesJoinCursorToSql() {
+        when(access.requireUser("Bearer member")).thenReturn(10L);
+        assertThrows(ChatException.class, () -> service.search("Bearer member", 4, "会议", null, 20));
+        verify(dao, never()).search(anyLong(), anyLong(), any(), any(), anyInt());
+
+        when(dao.membership(4, 10)).thenReturn(new GroupDao.Membership(42, 42));
+        var message = new GroupMessage(43, 4, 9, ID, "会议纪要", LocalDateTime.now());
+        when(dao.search(4, 42, "会议", null, 2)).thenReturn(List.of(message));
+        var result = service.search("Bearer member", 4, "会议", null, 1);
+        assertEquals(List.of(message), result.messages());
+        assertNull(result.nextBeforeId());
+        verify(dao).search(4, 42, "会议", null, 2);
+        assertThrows(ChatException.class, () -> service.search("Bearer member", 4, "会议", -1L, 20));
+    }
 }

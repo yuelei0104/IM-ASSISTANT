@@ -61,6 +61,14 @@ public class GroupController {
         return groups.sync(auth, groupId, afterId, limit);
     }
 
+    @GetMapping("/{groupId}/messages/search")
+    public GroupDtos.Page search(@RequestHeader(value = "Authorization", required = false) String auth,
+                                 @PathVariable long groupId, @RequestParam String q,
+                                 @RequestParam(required = false) Long beforeId,
+                                 @RequestParam(defaultValue = "20") int limit) {
+        return groups.search(auth, groupId, q, beforeId, limit);
+    }
+
     @GetMapping("/{groupId}/messages/{messageId}")
     public GroupMessage message(@RequestHeader(value = "Authorization", required = false) String auth,
                                 @PathVariable long groupId, @PathVariable long messageId) {

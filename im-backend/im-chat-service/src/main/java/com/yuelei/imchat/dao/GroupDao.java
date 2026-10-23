@@ -39,6 +39,9 @@ public interface GroupDao {
                              @Param("joinedAfterId") long joinedAfterId);
     List<GroupMessage> history(@Param("groupId") long groupId, @Param("joinedAfterId") long joinedAfterId,
                                @Param("beforeId") Long beforeId, @Param("limit") int limit);
+    List<GroupMessage> search(@Param("groupId") long groupId, @Param("joinedAfterId") long joinedAfterId,
+                              @Param("pattern") String pattern, @Param("beforeId") Long beforeId,
+                              @Param("limit") int limit);
     List<GroupMessage> after(@Param("groupId") long groupId, @Param("joinedAfterId") long joinedAfterId,
                              @Param("afterId") long afterId, @Param("limit") int limit);
     Long validMessage(@Param("groupId") long groupId, @Param("messageId") long messageId,

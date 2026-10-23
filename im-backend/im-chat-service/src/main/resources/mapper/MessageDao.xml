@@ -53,6 +53,14 @@
         ORDER BY id ASC
         LIMIT #{limit}
     </select>
+    <select id="search" resultMap="message">
+        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at
+        FROM im_direct_message FORCE INDEX (idx_direct_pair_history)
+        WHERE user_low_id = #{low} AND user_high_id = #{high}
+          AND body LIKE CONCAT('%', #{pattern}, '%') ESCAPE '='
+        <if test="beforeId != null">AND id &lt; #{beforeId}</if>
+        ORDER BY id DESC LIMIT #{limit}
+    </select>
     <select id="unreadCounts" resultMap="unreadCount">
         SELECT i.peer_id,
                (SELECT COUNT(*) FROM im_direct_message m FORCE INDEX (idx_direct_unread)

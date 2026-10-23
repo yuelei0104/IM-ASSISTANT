@@ -43,10 +43,10 @@ import {
   type ContactProfile,
   type ContactRequest,
 } from "./contactApi";
-import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, type DirectMessage } from "./chatApi";
+import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, searchDirectMessages, type DirectMessage } from "./chatApi";
 import {
   createGroupChat, getGroupMessage, inviteGroupMembers, listGroups, loadGroupMessages,
-  markGroupRead, sendGroupMessage, syncGroupMessages, listGroupSummaries, generateGroupSummary,
+  markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages, listGroupSummaries, generateGroupSummary,
   type GroupChat, type GroupMessage, type GroupSummary,
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, type MentionNotice } from "./noticeApi";
@@ -227,6 +227,14 @@ let unreadBusy = false;
 const nextBeforeId = ref<number | null>(null);
 const chatBusy = ref(false);
 const chatError = ref("");
+const historySearchOpen = ref(false);
+const historyQuery = ref("");
+const historyTerm = ref("");
+const historyResults = ref<Array<DirectMessage | GroupMessage>>([]);
+const historyNextBeforeId = ref<number | null>(null);
+const historySearching = ref(false);
+const historySearchError = ref("");
+let historySearchSeq = 0;
 const sending = ref(false);
 let chatSeq = 0;
 let pendingRealtimeRefresh = false;
@@ -276,6 +284,7 @@ watch(knownPeers, (peers) => {
   try { localStorage.setItem(peerCacheKey(currentAccount.value.id), JSON.stringify(peers)); } catch {}
 }, { deep: true });
 watch(activeId, () => {
+  closeHistorySearch();
   mentionPickerOpen.value = false;
   mentionSelections.value = {};
   showSummary.value = false;
@@ -299,6 +308,7 @@ watch(activeId, () => {
   nextTick(scrollBottom);
 });
 watch(page, () => {
+  if (page.value !== "chat") closeHistorySearch();
   stopVoice();
   infoOpen.value = false;
   if (page.value !== "chat") mobileChatOpen.value = false;
@@ -365,17 +375,9 @@ const messages = computed<Message[]>(() =>
       : [],
 );
 const visibleMessages = computed(() => messages.value);
-const conversations = computed(() =>
-  allConversations.value.filter(
-    (c) =>
-      c.name.toLowerCase().includes(search.value.toLowerCase()) ||
-      (c.id === activeId.value ? messages.value : []).some(
-        (m) =>
-          m.conversationId === c.id &&
-          m.text.toLowerCase().includes(search.value.toLowerCase()),
-      ),
-  ),
-);
+const conversations = computed(() => allConversations.value.filter((c) =>
+  c.name.toLowerCase().includes(search.value.toLowerCase()),
+));
 const friends = computed<Person[]>(() =>
   contactProfiles.value.map((p) => ({
     id: `user-${p.id}`,
@@ -1135,6 +1137,7 @@ async function signOut() {
     }
   }
   stopVoice();
+  closeHistorySearch();
   chatSocket?.close();
   chatSocket = null;
   pendingRealtimeRefresh = false;
@@ -1266,6 +1269,52 @@ async function send() {
     chatError.value = error instanceof Error ? error.message : "发送失败，请重试";
   } finally {
     sending.value = false;
+  }
+}
+function closeHistorySearch() {
+  historySearchSeq++;
+  historySearchOpen.value = false;
+  historyQuery.value = "";
+  historyTerm.value = "";
+  historyResults.value = [];
+  historyNextBeforeId.value = null;
+  historySearching.value = false;
+  historySearchError.value = "";
+}
+async function searchHistory(beforeId?: number) {
+  const term = beforeId ? historyTerm.value : historyQuery.value.trim();
+  if (!beforeId && (term.length < 2 || term.length > 50)) {
+    historySearchError.value = "请输入 2 到 50 个字符的关键词";
+    return;
+  }
+  if (!term || historySearching.value || !currentAccount.value) return;
+  const peerId = directPeer(activeId.value);
+  const groupId = serverGroupId(activeId.value);
+  if (!peerId && !groupId) return;
+  const conversationId = activeId.value;
+  const accountId = currentAccount.value.id;
+  const sequence = ++historySearchSeq;
+  historySearching.value = true;
+  historySearchError.value = "";
+  if (!beforeId) {
+    historyTerm.value = term;
+    historyResults.value = [];
+    historyNextBeforeId.value = null;
+  }
+  try {
+    const result = peerId
+      ? await searchDirectMessages(peerId, term, beforeId)
+      : await searchGroupMessages(groupId!, term, beforeId);
+    if (sequence !== historySearchSeq || currentAccount.value?.id !== accountId ||
+        activeId.value !== conversationId || !historySearchOpen.value) return;
+    historyResults.value = beforeId ? [...historyResults.value, ...result.messages] : result.messages;
+    historyNextBeforeId.value = result.nextBeforeId;
+  } catch (error) {
+    if (sequence === historySearchSeq && currentAccount.value?.id === accountId &&
+        activeId.value === conversationId && historySearchOpen.value)
+      historySearchError.value = error instanceof Error ? error.message : "搜索失败，请重试";
+  } finally {
+    if (sequence === historySearchSeq) historySearching.value = false;
   }
 }
 async function requestFriend() {
@@ -1633,6 +1682,7 @@ function visibility() {
 document.addEventListener("visibilitychange", visibility);
 onBeforeUnmount(() => {
   stopVoice();
+  closeHistorySearch();
   chatSocket?.close();
   clearInterval(chatPoll);
   clearTimeout(toastTimer);
@@ -2126,8 +2176,8 @@ onBeforeUnmount(() => {
         <div class="search-box">
           <AppIcon name="search" :size="17" /><input
             v-model="search"
-            aria-label="搜索会话或消息"
-            placeholder="搜索会话或消息"
+            aria-label="筛选会话"
+            placeholder="筛选会话"
           /><button
             v-if="search"
             class="clear-button"
@@ -2219,6 +2269,14 @@ onBeforeUnmount(() => {
           </div>
           <div class="header-actions">
             <button
+              v-if="directPeer(activeId) || serverGroupId(activeId)"
+              class="icon-button"
+              title="搜索当前会话的历史消息"
+              aria-label="搜索当前会话的历史消息"
+              :aria-expanded="historySearchOpen"
+              @click="historySearchOpen ? closeHistorySearch() : historySearchOpen = true"
+            ><AppIcon name="search" /></button>
+            <button
               class="icon-button"
               title="接上讨论"
               aria-label="打开讨论助手"
@@ -2235,6 +2293,27 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </header>
+        <section v-if="historySearchOpen" class="history-search" aria-label="当前会话历史消息搜索">
+          <div class="history-search-heading">
+            <strong>搜索 {{ active.name }} 的历史消息</strong>
+            <button class="text-button" type="button" @click="closeHistorySearch">关闭</button>
+          </div>
+          <form class="history-search-form" @submit.prevent="searchHistory()">
+            <input v-model="historyQuery" maxlength="50" aria-label="消息关键词" placeholder="输入至少 2 个字符" />
+            <button type="submit" :disabled="historySearching || historyQuery.trim().length < 2">{{ historySearching ? "搜索中…" : "搜索" }}</button>
+          </form>
+          <p v-if="historySearchError" class="error-text" role="alert">{{ historySearchError }}</p>
+          <div v-if="historyTerm" class="history-results" aria-live="polite">
+            <p v-if="!historySearching && !historyResults.length && !historySearchError" class="history-empty">没有找到包含“{{ historyTerm }}”的消息</p>
+            <article v-for="m in historyResults" :key="m.id" class="history-result">
+              <div><strong>{{ m.senderId === currentAccount?.id ? "我" : person(`user-${m.senderId}`).name }}</strong>
+                <time>{{ new Date(m.createdAt).toLocaleString("zh-CN") }}</time></div>
+              <p>{{ m.body }}</p>
+            </article>
+            <button v-if="historyNextBeforeId" class="load-more" type="button" :disabled="historySearching"
+              @click="searchHistory(historyNextBeforeId)">{{ historySearching ? "加载中…" : "加载更早结果" }}</button>
+          </div>
+        </section>
         <div class="chat-notice">
           <AppIcon name="shield" :size="15" />
           消息已保存；在线时实时推送，断线后自动补拉。翻译与 AI 总结仍在开发中。
