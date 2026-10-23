@@ -33,7 +33,8 @@ public interface GroupDao {
                   @Param("cursor") long cursor);
     Long latestId(@Param("groupId") long groupId);
     int insertMessage(@Param("groupId") long groupId, @Param("senderId") long senderId,
-                      @Param("clientMsgId") String clientMsgId, @Param("body") String body);
+                      @Param("clientMsgId") String clientMsgId, @Param("body") String body,
+                      @Param("kind") String kind);
     GroupMessage byClientId(@Param("senderId") long senderId, @Param("clientMsgId") String clientMsgId);
     GroupMessage messageById(@Param("groupId") long groupId, @Param("messageId") long messageId,
                              @Param("joinedAfterId") long joinedAfterId);

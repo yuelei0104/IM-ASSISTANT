@@ -94,7 +94,7 @@ async function request<T>(
     throw new ApiError(
       response.status >= 500
         ? "用户服务暂不可用，请检查后端是否已启动"
-        : "用户服务返回了无法识别的响应",
+        : `用户服务返回 HTTP ${response.status}，响应格式无法识别；请检查浏览器请求来源与网关`,
       response.status,
     );
   }

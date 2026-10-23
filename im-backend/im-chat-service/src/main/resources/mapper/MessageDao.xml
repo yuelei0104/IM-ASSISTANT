@@ -24,8 +24,9 @@
         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
     </insert>
     <insert id="ensurePair">
-        INSERT IGNORE INTO im_direct_pair_lock (user_low_id, user_high_id)
+        INSERT INTO im_direct_pair_lock (user_low_id, user_high_id)
         VALUES (#{low}, #{high})
+        ON DUPLICATE KEY UPDATE user_low_id = user_low_id
     </insert>
     <select id="lockPair" resultType="int">
         SELECT 1 FROM im_direct_pair_lock

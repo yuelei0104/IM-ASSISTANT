@@ -23,6 +23,7 @@
             <arg column="sender_id" javaType="_long"/>
             <arg column="client_msg_id" javaType="java.lang.String"/>
             <arg column="body" javaType="java.lang.String"/>
+            <arg column="kind" javaType="java.lang.String"/>
             <arg column="created_at" javaType="java.time.LocalDateTime"/>
         </constructor>
     </resultMap>
@@ -61,34 +62,34 @@
         SELECT COALESCE(MAX(id), 0) FROM im_group_message WHERE group_id = #{groupId}
     </select>
     <insert id="insertMessage">
-        INSERT INTO im_group_message (group_id, sender_id, client_msg_id, body)
-        VALUES (#{groupId}, #{senderId}, #{clientMsgId}, #{body})
+        INSERT INTO im_group_message (group_id, sender_id, client_msg_id, body, kind)
+        VALUES (#{groupId}, #{senderId}, #{clientMsgId}, #{body}, #{kind})
         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
     </insert>
     <select id="byClientId" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
         FROM im_group_message WHERE sender_id = #{senderId} AND client_msg_id = #{clientMsgId}
     </select>
     <select id="messageById" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
         FROM im_group_message
         WHERE group_id = #{groupId} AND id = #{messageId} AND id &gt; #{joinedAfterId}
     </select>
     <select id="history" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
         FROM im_group_message FORCE INDEX (idx_group_history)
         WHERE group_id = #{groupId} AND id &gt; #{joinedAfterId}
         <if test="beforeId != null">AND id &lt; #{beforeId}</if>
         ORDER BY id DESC LIMIT #{limit}
     </select>
     <select id="after" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
         FROM im_group_message FORCE INDEX (idx_group_history)
         WHERE group_id = #{groupId} AND id &gt; GREATEST(#{joinedAfterId}, #{afterId})
         ORDER BY id ASC LIMIT #{limit}
     </select>
     <select id="search" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
         FROM im_group_message FORCE INDEX (idx_group_history)
         WHERE group_id = #{groupId} AND id &gt; #{joinedAfterId}
           AND body LIKE CONCAT('%', #{pattern}, '%') ESCAPE '='

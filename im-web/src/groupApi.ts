@@ -13,6 +13,7 @@ export type GroupMessage = {
   senderId: number;
   clientMsgId: string;
   body: string;
+  kind: "TEXT" | "CAPTION";
   createdAt: string;
 };
 export type GroupPage = { messages: GroupMessage[]; nextBeforeId: number | null };
@@ -65,8 +66,8 @@ export const searchGroupMessages = (id: number, query: string, beforeId?: number
   request<GroupPage>(`/${id}/messages/search?q=${encodeURIComponent(query)}&limit=20${beforeId ? `&beforeId=${beforeId}` : ""}`);
 export const getGroupMessage = (id: number, messageId: number) =>
   request<GroupMessage>(`/${id}/messages/${messageId}`);
-export const sendGroupMessage = (id: number, clientMsgId: string, body: string, mentionedUserIds: number[] = []) =>
-  request<GroupMessage>(`/${id}/messages`, { clientMsgId, body, mentionedUserIds });
+export const sendGroupMessage = (id: number, clientMsgId: string, body: string, mentionedUserIds: number[] = [], kind: "TEXT" | "CAPTION" = "TEXT") =>
+  request<GroupMessage>(`/${id}/messages`, { clientMsgId, body, mentionedUserIds, kind });
 export const markGroupRead = (id: number, lastReadMessageId: number) =>
   request<void>(`/${id}/read`, { lastReadMessageId });
 export const listGroupSummaries = (id: number) =>

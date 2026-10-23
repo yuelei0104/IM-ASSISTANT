@@ -96,18 +96,23 @@ public class GroupService {
         requireMember(groupId, sender);
         String body = input.body().trim();
         if (body.isEmpty()) throw new ChatException(HttpStatus.BAD_REQUEST, "消息不能为空");
+        String kind = input.kind() == null ? "TEXT" : input.kind();
+        if (!kind.equals("TEXT") && !kind.equals("CAPTION"))
+            throw new ChatException(HttpStatus.BAD_REQUEST, "消息类型无效");
         List<Long> targets = input.mentionedUserIds();
         if (targets == null || targets.size() > 10
                 || targets.stream().anyMatch(id -> id == null || id <= 0 || id == sender)
                 || new HashSet<>(targets).size() != targets.size()
                 || !new HashSet<>(dao.memberIds(groupId)).containsAll(targets))
             throw new ChatException(HttpStatus.BAD_REQUEST, "只能提醒当前讨论室中的其他成员，最多 10 人");
+        if (kind.equals("CAPTION") && !targets.isEmpty())
+            throw new ChatException(HttpStatus.BAD_REQUEST, "字幕消息不能附带点名提醒");
         GroupMessage prior = dao.byClientId(sender, input.clientMsgId());
-        if (prior != null) return existing(prior, groupId, body, targets);
-        dao.insertMessage(groupId, sender, input.clientMsgId(), body);
+        if (prior != null) return existing(prior, groupId, body, kind, targets);
+        dao.insertMessage(groupId, sender, input.clientMsgId(), body, kind);
         GroupMessage saved = dao.byClientId(sender, input.clientMsgId());
         if (saved == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "消息保存失败");
-        if (saved.groupId() != groupId || !saved.body().equals(body))
+        if (saved.groupId() != groupId || !saved.body().equals(body) || !saved.kind().equals(kind))
             throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于另一条消息");
         for (long recipient : targets) notices.add(groupId, saved.id(), sender, recipient);
         events.publishEvent(new GroupEvent(groupId, saved.id(), dao.memberIds(groupId)));
@@ -115,8 +120,8 @@ public class GroupService {
         return saved;
     }
 
-    private GroupMessage existing(GroupMessage prior, long groupId, String body, List<Long> targets) {
-        if (prior.groupId() != groupId || !prior.body().equals(body)
+    private GroupMessage existing(GroupMessage prior, long groupId, String body, String kind, List<Long> targets) {
+        if (prior.groupId() != groupId || !prior.body().equals(body) || !prior.kind().equals(kind)
                 || !notices.recipients(prior.id()).equals(targets.stream().sorted().toList()))
             throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于另一条消息");
         return prior;

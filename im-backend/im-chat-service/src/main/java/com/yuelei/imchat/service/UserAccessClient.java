@@ -1,6 +1,7 @@
 package com.yuelei.imchat.service;
 
 import com.yuelei.imchat.exception.ChatException;
+import com.yuelei.imcommon.Identity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -51,5 +52,4 @@ public class UserAccessClient {
         }
     }
 
-    public record Identity(long userId) { }
 }

@@ -79,7 +79,7 @@ class GroupServiceTest {
         when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
         assertThrows(ChatException.class, () ->
                 service.send("Bearer t", 4, new GroupDtos.SendGroup(ID, "你好", List.of())));
-        verify(dao, never()).insertMessage(anyLong(), anyLong(), any(), any());
+        verify(dao, never()).insertMessage(anyLong(), anyLong(), any(), any(), any());
 
         when(dao.membership(4, 9)).thenReturn(new GroupDao.Membership(0, 0));
         when(dao.byClientId(9, ID)).thenReturn(
@@ -98,7 +98,7 @@ class GroupServiceTest {
         var input = new GroupDtos.SendGroup(ID, "@伙伴#10 请看", List.of(10L));
         assertThrows(ChatException.class, () ->
                 service.send("Bearer t", 4, new GroupDtos.SendGroup(ID, "请看", List.of(11L))));
-        verify(dao, never()).insertMessage(anyLong(), anyLong(), any(), any());
+        verify(dao, never()).insertMessage(anyLong(), anyLong(), any(), any(), any());
 
         var saved = new GroupMessage(51, 4, 9, ID, "@伙伴#10 请看", LocalDateTime.now());
         when(dao.byClientId(9, ID)).thenReturn(null, saved);
@@ -110,8 +110,26 @@ class GroupServiceTest {
         when(notices.recipients(51)).thenReturn(List.of(10L));
         assertEquals(saved, service.send("Bearer t", 4, input));
         verify(notices, times(1)).add(4, 51, 9, 10);
-        verify(dao, times(1)).insertMessage(4, 9, ID, "@伙伴#10 请看");
+        verify(dao, times(1)).insertMessage(4, 9, ID, "@伙伴#10 请看", "TEXT");
         verifyNoMoreInteractions(events);
+    }
+
+    @Test
+    void captionsRequireMembershipAndCannotReuseTextMessageId() {
+        when(access.requireUser("Bearer t")).thenReturn(9L);
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+        var caption = new GroupDtos.SendGroup(ID, "会议字幕", List.of(), "CAPTION");
+        assertThrows(ChatException.class, () -> service.send("Bearer t", 4, caption));
+        verify(dao, never()).insertMessage(anyLong(), anyLong(), any(), any(), any());
+
+        when(dao.membership(4, 9)).thenReturn(new GroupDao.Membership(0, 0));
+        when(dao.memberIds(4)).thenReturn(List.of(9L, 10L));
+        assertThrows(ChatException.class, () -> service.send("Bearer t", 4,
+                new GroupDtos.SendGroup(ID, "会议字幕", List.of(10L), "CAPTION")));
+        var textMessage = new GroupMessage(51, 4, 9, ID, "会议字幕", LocalDateTime.now());
+        when(dao.byClientId(9, ID)).thenReturn(textMessage);
+        assertThrows(ChatException.class, () -> service.send("Bearer t", 4, caption));
+        verify(dao, never()).insertMessage(anyLong(), anyLong(), any(), any(), any());
     }
     @Test
     void searchRequiresMembershipAndPassesJoinCursorToSql() {

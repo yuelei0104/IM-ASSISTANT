@@ -28,13 +28,14 @@ Code is organized inside `im-user-service` by responsibility: `controller`
 (HTTP), `dto` (request/response), `service` (auth, codes, sessions), `dao`
 (MyBatis method declarations), `resources/mapper` (SQL XML), `model` (user row),
 `util` (contact validation), `config`, and `exception`.
-`im-common` remains for types genuinely shared across services.
+`im-common` holds only the shared `{ "userId": ... }` identity contract.
 
 Start the containers above, then in PowerShell from this directory:
 
 ```powershell
 $env:IM_MYSQL_PASSWORD = Read-Host "IM_MYSQL_PASSWORD from .env"
-.\mvnw.cmd -pl im-user-service test
+.\mvnw.cmd -pl im-common install -DskipTests
+.\mvnw.cmd -pl im-user-service -am test
 .\mvnw.cmd -pl im-user-service spring-boot:run "-Dspring-boot.run.profiles=dev"
 ```
 
@@ -120,7 +121,7 @@ and start chat on 8082:
 
 ```powershell
 $env:IM_MYSQL_PASSWORD = Read-Host "IM_MYSQL_PASSWORD from .env"
-.\mvnw.cmd -pl im-chat-service test
+.\mvnw.cmd -pl im-chat-service -am test
 .\mvnw.cmd -pl im-chat-service spring-boot:run "-Dspring-boot.run.profiles=dev"
 ```
 
@@ -204,6 +205,27 @@ existing message without duplicating notices. The notification inbox is
 browser to reload the authenticated inbox; polling fills gaps after disconnect.
 Direct-chat discussion hints and tasks remain browser demos.
 
+Chat Flyway V9 adds a `kind` to group messages (`TEXT` by default, `CAPTION`
+for explicitly shared speech text). In a discussion room, the microphone
+first shows an on-device preview visible only to the speaker. Clicking
+**分享字幕到讨论室** sends that reviewed text as a normal persisted group message.
+For a remote-control session without a microphone, type a caption in the
+discussion room composer and click **作为字幕发送**; this checks the server flow,
+but does not validate speech recognition. Both paths require an explicit click;
+the server requires current membership and returns it through the same
+member-scoped history and recovery APIs. It stores text, not microphone
+audio. Captions are included in later group summaries when eligible under
+the usual join cursor. This is a manual caption-sharing flow, not automatic
+continuous meeting transcription; the local browser must support and have
+the Chinese speech pack installed.
+For a local check, sign in to two existing members in separate browsers, open
+the same discussion room, use A's microphone preview or type a caption and
+click the corresponding share action. B should see a labeled caption; refresh B
+to confirm it persists. Start a new room member after the send and confirm
+that member cannot read earlier caption history. The summary button uses the
+same recent, membership-scoped messages as before. No session-token copying
+or Python probe is needed for this check.
+
 ### Private group summaries
 
 Chat Flyway V7 creates `im_group_summary`. Group members can generate a
@@ -235,3 +257,34 @@ accepts `{ "completed": true }`; `DELETE /api/chats/tasks/{id}` removes an item.
 All requests require the bearer session; SQL reads and writes are scoped to its
 user ID. Tasks are personal, not shared with group members. The feature needs
 MySQL and the user service, but does not require an AI model.
+
+## Optional local gateway
+
+`im-gateway` is a runnable Spring Cloud Gateway on `127.0.0.1:8080`. It routes
+`/api/auth/**` and `/api/contacts/**` to 8081, `/api/chats/**` HTTP and
+`/api/chats/ws` WebSocket to 8082. Start both services above first. In a third
+PowerShell window from `D:\im-assistant\im-backend`:
+
+```powershell
+.\mvnw.cmd -pl im-gateway -am package
+java -jar .\im-gateway\target\im-gateway-0.0.1-SNAPSHOT.jar
+```
+
+Check `http://127.0.0.1:8080/actuator/health`. In a fourth window start Vite
+with the gateway route enabled, then open the `Local` URL printed by Vite
+(normally `http://localhost:5173`, or 5174 if 5173 is occupied):
+
+```powershell
+Set-Location D:\im-assistant\im-web
+$env:VITE_IM_GATEWAY_URL = 'http://127.0.0.1:8080'
+npm run dev
+```
+
+In the `dev` profile, user-service HTTP and chat-service WebSocket accept
+loopback browser origins on any local port, so Vite can choose the next free
+port. These services still bind to 127.0.0.1 for local development.
+
+Without that environment variable Vite continues proxying straight to 8081
+and 8082. The gateway currently has static local targets, not service discovery
+or cluster-aware WebSocket routing. Both the gateway and backend ports are for
+loopback development; do not expose this setup to the public internet.
