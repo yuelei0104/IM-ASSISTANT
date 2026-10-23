@@ -46,13 +46,13 @@ async function request<T>(path: string, body?: object): Promise<T> {
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
-export function loadDirectMessages(peerId: number, beforeId?: number) {
-  const query = beforeId ? `?beforeId=${beforeId}&limit=50` : "?limit=50";
+export function loadDirectMessages(peerId: number, beforeId?: number, limit = 50) {
+  const query = beforeId ? `?beforeId=${beforeId}&limit=${limit}` : `?limit=${limit}`;
   return request<MessagePage>(`/${peerId}/messages${query}`);
 }
 
-export function syncDirectMessages(peerId: number, afterId: number) {
-  return request<DirectSyncPage>(`/${peerId}/messages/sync?afterId=${afterId}&limit=50`);
+export function syncDirectMessages(peerId: number, afterId: number, limit = 50) {
+  return request<DirectSyncPage>(`/${peerId}/messages/sync?afterId=${afterId}&limit=${limit}`);
 }
 
 export function searchDirectMessages(peerId: number, query: string, beforeId?: number) {

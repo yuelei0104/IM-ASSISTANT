@@ -235,6 +235,14 @@ const historyNextBeforeId = ref<number | null>(null);
 const historySearching = ref(false);
 const historySearchError = ref("");
 let historySearchSeq = 0;
+const contextActive = ref(false);
+const contextTarget = ref<DirectMessage | GroupMessage | null>(null);
+const contextMessages = ref<Array<DirectMessage | GroupMessage>>([]);
+const contextBeforeId = ref<number | null>(null);
+const contextAfterId = ref<number | null>(null);
+const contextBusy = ref(false);
+const contextError = ref("");
+let contextSeq = 0;
 const sending = ref(false);
 let chatSeq = 0;
 let pendingRealtimeRefresh = false;
@@ -285,6 +293,7 @@ watch(knownPeers, (peers) => {
 }, { deep: true });
 watch(activeId, () => {
   closeHistorySearch();
+  closeMessageContext(false);
   mentionPickerOpen.value = false;
   mentionSelections.value = {};
   showSummary.value = false;
@@ -308,7 +317,7 @@ watch(activeId, () => {
   nextTick(scrollBottom);
 });
 watch(page, () => {
-  if (page.value !== "chat") closeHistorySearch();
+  if (page.value !== "chat") { closeHistorySearch(); closeMessageContext(false); }
   stopVoice();
   infoOpen.value = false;
   if (page.value !== "chat") mobileChatOpen.value = false;
@@ -354,27 +363,21 @@ watch(allConversations, (items) => {
     activeId.value = items[0]?.id || "";
 });
 const active = computed(() => allConversations.value.find((c) => c.id === activeId.value));
-const messages = computed<Message[]>(() =>
-  directPeer(activeId.value)
-    ? directMessages.value.map((m) => ({
-        id: `server-message-${m.id}`,
-        conversationId: activeId.value,
-        senderId: m.senderId === currentAccount.value?.id ? selfId : `user-${m.senderId}`,
-        text: m.body,
-        time: new Date(m.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-        kind: "text" as const,
-      }))
-    : serverGroupId(activeId.value)
-      ? groupMessages.value.map((m) => ({
-          id: `group-message-${m.id}`, conversationId: activeId.value,
-          senderId: m.senderId === currentAccount.value?.id ? selfId : `user-${m.senderId}`,
-          text: m.body,
-          time: new Date(m.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-          kind: "text" as const,
-        }))
-      : [],
-);
-const visibleMessages = computed(() => messages.value);
+function renderMessage(m: DirectMessage | GroupMessage): Message {
+  return {
+    id: `${"groupId" in m ? "group" : "server"}-message-${m.id}`,
+    conversationId: activeId.value,
+    senderId: m.senderId === currentAccount.value?.id ? selfId : `user-${m.senderId}`,
+    text: m.body,
+    time: new Date(m.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+    kind: "text",
+  };
+}
+const messages = computed<Message[]>(() => directPeer(activeId.value)
+  ? directMessages.value.map(renderMessage)
+  : serverGroupId(activeId.value) ? groupMessages.value.map(renderMessage) : []);
+const visibleMessages = computed(() => contextActive.value
+  ? contextMessages.value.map(renderMessage) : messages.value);
 const conversations = computed(() => allConversations.value.filter((c) =>
   c.name.toLowerCase().includes(search.value.toLowerCase()),
 ));
@@ -489,10 +492,11 @@ function notify(s: string) {
   toastTimer = setTimeout(() => (toast.value = ""), 3500);
 }
 function scrollBottom() {
-  if (messageScroll.value)
+  if (!contextActive.value && messageScroll.value)
     messageScroll.value.scrollTop = messageScroll.value.scrollHeight;
 }
 function openChat(id: string, source?: string) {
+  closeMessageContext(false);
   const wasActive = activeId.value === id;
   const previous = allConversations.value.find((x) => x.id === id);
   const unreadMessages = id === activeId.value ? messages.value : [];
@@ -557,7 +561,7 @@ async function loadUnreadPeer(peerId: number, accountId: number) {
 }
 async function markVisibleRead(peerId: number) {
   const accountId = currentAccount.value?.id;
-  if (!accountId || page.value !== "chat" || directPeer(activeId.value) !== peerId
+  if (!accountId || contextActive.value || page.value !== "chat" || directPeer(activeId.value) !== peerId
       || document.hidden || readInFlight.has(peerId)) return;
   const lastReceivedId = directMessages.value
     .filter((m) => m.senderId === peerId && m.recipientId === accountId).at(-1)?.id;
@@ -679,7 +683,7 @@ function mergeGroup(incoming: GroupMessage[]) {
 }
 async function markVisibleGroupRead(groupId: number) {
   const accountId = currentAccount.value?.id;
-  if (!accountId || document.hidden || page.value !== "chat" || serverGroupId(activeId.value) !== groupId
+  if (!accountId || contextActive.value || document.hidden || page.value !== "chat" || serverGroupId(activeId.value) !== groupId
       || groupReadInFlight.has(groupId)) return;
   const last = groupMessages.value.at(-1)?.id;
   if (!last || (groupLastRead.get(groupId) ?? 0) >= last) return;
@@ -725,7 +729,8 @@ async function refreshGroupChat() {
     if (resumed === null) return;
     chatError.value = "";
     await nextTick();
-    if (focusId.value)
+    if (contextActive.value) { /* Keep the context view in place during background sync. */ }
+    else if (focusId.value)
       document.getElementById(`msg-${focusId.value}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     else scrollBottom();
     void markVisibleGroupRead(groupId);
@@ -1138,6 +1143,7 @@ async function signOut() {
   }
   stopVoice();
   closeHistorySearch();
+  closeMessageContext(false);
   chatSocket?.close();
   chatSocket = null;
   pendingRealtimeRefresh = false;
@@ -1315,6 +1321,108 @@ async function searchHistory(beforeId?: number) {
       historySearchError.value = error instanceof Error ? error.message : "搜索失败，请重试";
   } finally {
     if (sequence === historySearchSeq) historySearching.value = false;
+  }
+}
+function closeMessageContext(showLatest = true) {
+  contextSeq++;
+  contextActive.value = false;
+  contextTarget.value = null;
+  contextMessages.value = [];
+  contextBeforeId.value = null;
+  contextAfterId.value = null;
+  contextBusy.value = false;
+  contextError.value = "";
+  focusId.value = "";
+  if (showLatest) nextTick(() => {
+    scrollBottom();
+    const peerId = directPeer(activeId.value);
+    const groupId = serverGroupId(activeId.value);
+    if (peerId) void markVisibleRead(peerId);
+    if (groupId) void markVisibleGroupRead(groupId);
+  });
+}
+function mergeContext(incoming: Array<DirectMessage | GroupMessage>) {
+  const byId = new Map(contextMessages.value.map((m) => [m.id, m]));
+  for (const m of incoming) byId.set(m.id, m);
+  contextMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
+}
+async function openMessageContext(target: DirectMessage | GroupMessage | null) {
+  const accountId = currentAccount.value?.id;
+  const peerId = directPeer(activeId.value);
+  const groupId = serverGroupId(activeId.value);
+  if (!target || !accountId || (!peerId && !groupId)) return;
+  const conversationId = activeId.value;
+  closeHistorySearch();
+  stopVoice();
+  const sequence = ++contextSeq;
+  contextActive.value = true;
+  contextTarget.value = target;
+  contextMessages.value = [];
+  contextBeforeId.value = null;
+  contextAfterId.value = null;
+  contextBusy.value = true;
+  contextError.value = "";
+  try {
+    const [older, newer] = await Promise.all([
+      peerId ? loadDirectMessages(peerId, target.id, 20) : loadGroupMessages(groupId!, target.id, 20),
+      peerId ? syncDirectMessages(peerId, target.id, 20) : syncGroupMessages(groupId!, target.id, 20),
+    ]);
+    if (sequence !== contextSeq || currentAccount.value?.id !== accountId ||
+        activeId.value !== conversationId) return;
+    mergeContext([...older.messages, target, ...newer.messages]);
+    contextBeforeId.value = older.nextBeforeId;
+    contextAfterId.value = newer.nextAfterId;
+    focusId.value = renderMessage(target).id;
+    await nextTick();
+    document.getElementById(`msg-${focusId.value}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => { if (sequence === contextSeq) focusId.value = ""; }, 3000);
+  } catch (error) {
+    if (sequence === contextSeq && error instanceof ApiError && error.status === 403) {
+      closeMessageContext(false);
+      notify("已无权查看此讨论室");
+    } else if (sequence === contextSeq)
+      contextError.value = error instanceof Error ? error.message : "无法查看消息上下文";
+  } finally {
+    if (sequence === contextSeq) contextBusy.value = false;
+  }
+}
+async function loadMessageContext(direction: "older" | "newer") {
+  const cursor = direction === "older" ? contextBeforeId.value : contextAfterId.value;
+  const peerId = directPeer(activeId.value);
+  const groupId = serverGroupId(activeId.value);
+  const accountId = currentAccount.value?.id;
+  const conversationId = activeId.value;
+  if (!contextActive.value || !cursor || !accountId || (!peerId && !groupId) || contextBusy.value) return;
+  const sequence = ++contextSeq;
+  contextBusy.value = true;
+  contextError.value = "";
+  const previousHeight = messageScroll.value?.scrollHeight ?? 0;
+  const previousTop = messageScroll.value?.scrollTop ?? 0;
+  try {
+    if (direction === "older") {
+      const page = peerId ? await loadDirectMessages(peerId, cursor, 20) : await loadGroupMessages(groupId!, cursor, 20);
+      if (sequence !== contextSeq || currentAccount.value?.id !== accountId ||
+          activeId.value !== conversationId || !contextActive.value) return;
+      mergeContext(page.messages);
+      contextBeforeId.value = page.nextBeforeId;
+      await nextTick();
+      if (messageScroll.value)
+        messageScroll.value.scrollTop = previousTop + messageScroll.value.scrollHeight - previousHeight;
+    } else {
+      const page = peerId ? await syncDirectMessages(peerId, cursor, 20) : await syncGroupMessages(groupId!, cursor, 20);
+      if (sequence !== contextSeq || currentAccount.value?.id !== accountId ||
+          activeId.value !== conversationId || !contextActive.value) return;
+      mergeContext(page.messages);
+      contextAfterId.value = page.nextAfterId;
+    }
+  } catch (error) {
+    if (sequence === contextSeq && error instanceof ApiError && error.status === 403) {
+      closeMessageContext(false);
+      notify("已无权查看此讨论室");
+    } else if (sequence === contextSeq)
+      contextError.value = error instanceof Error ? error.message : "加载上下文失败";
+  } finally {
+    if (sequence === contextSeq) contextBusy.value = false;
   }
 }
 async function requestFriend() {
@@ -1683,6 +1791,7 @@ document.addEventListener("visibilitychange", visibility);
 onBeforeUnmount(() => {
   stopVoice();
   closeHistorySearch();
+  closeMessageContext(false);
   chatSocket?.close();
   clearInterval(chatPoll);
   clearTimeout(toastTimer);
@@ -2309,6 +2418,7 @@ onBeforeUnmount(() => {
               <div><strong>{{ m.senderId === currentAccount?.id ? "我" : person(`user-${m.senderId}`).name }}</strong>
                 <time>{{ new Date(m.createdAt).toLocaleString("zh-CN") }}</time></div>
               <p>{{ m.body }}</p>
+              <button type="button" class="text-button" @click="openMessageContext(m)">查看上下文</button>
             </article>
             <button v-if="historyNextBeforeId" class="load-more" type="button" :disabled="historySearching"
               @click="searchHistory(historyNextBeforeId)">{{ historySearching ? "加载中…" : "加载更早结果" }}</button>
@@ -2318,23 +2428,35 @@ onBeforeUnmount(() => {
           <AppIcon name="shield" :size="15" />
           消息已保存；在线时实时推送，断线后自动补拉。翻译与 AI 总结仍在开发中。
         </div>
+        <div v-if="contextActive" class="context-banner">
+          <span>正在查看搜索结果附近的消息 · 新消息仍会在后台同步</span>
+          <button type="button" @click="closeMessageContext()">返回最新消息</button>
+        </div>
         <div ref="messageScroll" class="message-scroll">
           <div class="messages-inner">
-            <div v-if="chatError" class="error-text" role="alert">
+            <div v-if="contextError" class="error-text" role="alert">
+              {{ contextError }}
+              <button v-if="!contextMessages.length" class="text-button" type="button" @click="openMessageContext(contextTarget)">重试</button>
+            </div>
+            <div v-if="chatError && !contextActive" class="error-text" role="alert">
               {{ chatError }}
               <button class="text-button" type="button" :disabled="chatBusy" @click="directPeer(activeId) ? refreshDirectChat() : refreshGroupChat()">重试</button>
             </div>
-            <button v-if="directPeer(activeId) && nextBeforeId" class="load-more" :disabled="chatBusy" @click="loadOlderDirect">
+            <button v-if="contextActive && contextBeforeId" class="load-more" :disabled="contextBusy" @click="loadMessageContext('older')">
+              {{ contextBusy ? "加载中…" : "查看更早的上下文" }}
+            </button>
+            <button v-if="!contextActive && directPeer(activeId) && nextBeforeId" class="load-more" :disabled="chatBusy" @click="loadOlderDirect">
               {{ chatBusy ? "加载中…" : "查看更早消息" }}
             </button>
-            <button v-if="serverGroupId(activeId) && groupNextBeforeId" class="load-more" :disabled="chatBusy" @click="loadOlderGroup">
+            <button v-if="!contextActive && serverGroupId(activeId) && groupNextBeforeId" class="load-more" :disabled="chatBusy" @click="loadOlderGroup">
               {{ chatBusy ? "加载中…" : "查看更早消息" }}
             </button>
-            <p v-if="chatBusy && !messages.length" role="status">正在加载消息…</p>
-            <p v-if="!chatBusy && !chatError && !messages.length" class="empty-list">还没有消息，发一条开始聊天吧</p>
-            <div class="day-divider"><span>今天 · 讨论继续</span></div>
+            <p v-if="contextActive && contextBusy && !contextMessages.length" role="status">正在读取消息上下文…</p>
+            <p v-if="!contextActive && chatBusy && !messages.length" role="status">正在加载消息…</p>
+            <p v-if="!contextActive && !chatBusy && !chatError && !messages.length" class="empty-list">还没有消息，发一条开始聊天吧</p>
+            <div v-if="visibleMessages.length" class="day-divider"><span>{{ contextActive ? "搜索结果附近" : "今天 · 讨论继续" }}</span></div>
             <template v-for="m in visibleMessages" :key="m.id"
-              ><div v-if="unreadMarker === m.id" class="unread-divider">
+              ><div v-if="!contextActive && unreadMarker === m.id" class="unread-divider">
                 以下是未读消息
               </div>
               <div
@@ -2384,6 +2506,9 @@ onBeforeUnmount(() => {
                 </div>
               </div></template
             >
+            <button v-if="contextActive && contextAfterId" class="load-more" :disabled="contextBusy" @click="loadMessageContext('newer')">
+              {{ contextBusy ? "加载中…" : "查看后续的上下文" }}
+            </button>
           </div>
         </div>
         <div class="composer-zone">
@@ -2402,7 +2527,10 @@ onBeforeUnmount(() => {
               <button type="button" @click="stopVoice()">丢弃</button>
             </div>
           </div>
-          <div v-if="!canWrite" class="read-only">
+          <div v-if="contextActive" class="read-only">
+            <AppIcon name="lock" :size="16" /> 返回最新消息后可继续发送
+          </div>
+          <div v-else-if="!canWrite" class="read-only">
             <AppIcon name="lock" :size="16" /> 已解除好友关系，此对话为只读
           </div>
           <div v-else class="composer">
