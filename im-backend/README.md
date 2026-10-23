@@ -268,13 +268,18 @@ java -jar .\im-gateway\target\im-gateway-0.0.1-SNAPSHOT.jar
 ```
 
 Check `http://127.0.0.1:8080/actuator/health`. In a fourth window start Vite
-with the gateway route enabled, then open `http://localhost:5173`:
+with the gateway route enabled, then open the `Local` URL printed by Vite
+(normally `http://localhost:5173`, or 5174 if 5173 is occupied):
 
 ```powershell
 Set-Location D:\im-assistant\im-web
 $env:VITE_IM_GATEWAY_URL = 'http://127.0.0.1:8080'
 npm run dev
 ```
+
+In the `dev` profile, user-service HTTP and chat-service WebSocket accept
+loopback browser origins on any local port, so Vite can choose the next free
+port. These services still bind to 127.0.0.1 for local development.
 
 Without that environment variable Vite continues proxying straight to 8081
 and 8082. The gateway currently has static local targets, not service discovery
