@@ -43,7 +43,8 @@ public class GroupSummaryService {
             throw new ChatException(HttpStatus.FORBIDDEN, "无权总结加入前的消息");
         var draft = new GroupSummaryDao.Draft(groupId, userId, messages.get(0).id(),
                 messages.get(messages.size() - 1).id(), content);
-        summaries.insert(draft);
+        if (summaries.insert(draft) != 1)
+            throw new ChatException(HttpStatus.FORBIDDEN, "无权总结加入前的消息");
         if (draft.getId() == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "摘要保存失败");
         GroupSummary saved = summaries.visibleById(draft.getId(), groupId, userId);
         if (saved == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "摘要读取失败");

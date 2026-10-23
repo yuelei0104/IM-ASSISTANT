@@ -226,6 +226,25 @@ that member cannot read earlier caption history. The summary button uses the
 same recent, membership-scoped messages as before. No session-token copying
 or Python probe is needed for this check.
 
+For a repeatable API-level privacy check without copying session tokens, run
+the probe from the preview repository root after starting both services with
+the `dev` profile. It creates three disposable accounts and two captions in
+the local database; no microphone or Ollama installation is needed:
+
+```powershell
+Set-Location D:\im-assistant-preview
+python .\im-backend\tools\group_privacy_probe.py
+```
+
+The probe checks outsider access to send, history, sync, search, direct message
+lookup and summaries; it then invites a new member and checks that pre-join
+captions stay hidden while post-join captions remain visible. If Ollama and
+`IM_SUMMARY_MODEL` are running, add `--check-summary` to also generate a
+summary before the invitation and verify that the newcomer cannot list it.
+The script sends requests only to loopback ports 8081 and 8082, and keeps
+temporary bearer tokens in memory. A passing probe does not validate browser
+speech recognition, which needs a microphone.
+
 ### Private group summaries
 
 Chat Flyway V7 creates `im_group_summary`. Group members can generate a
@@ -236,6 +255,8 @@ list joins `im_group_member` and returns a summary only when its earliest
 source message is newer than that reader's join cursor; newly invited members
 cannot read a summary based on older conversation history. Summary text is
 stored only in the chat MySQL database and is never cached in the browser.
+The summary insert also checks membership and the join cursor in the same SQL
+statement, covering a membership change after the local model returns.
 
 Generation requires a locally running Ollama with a locally downloaded model.
 For example, run `ollama pull qwen3:4b`, then set
