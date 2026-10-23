@@ -193,4 +193,26 @@ existing message without duplicating notices. The notification inbox is
 `POST /api/chats/notices/{id}/read`, or all via
 `POST /api/chats/notices/read-all`. A `NOTICE` WebSocket event prompts the
 browser to reload the authenticated inbox; polling fills gaps after disconnect.
-Assistant summaries and tasks remain browser demos.
+Direct-chat discussion hints and tasks remain browser demos.
+
+### Private group summaries
+
+Chat Flyway V7 creates `im_group_summary`. Group members can generate a
+summary from at most 30 messages they are entitled to read and list up to 20
+recent summaries at `GET/POST /api/chats/groups/{groupId}/summaries`.
+Both actions require a bearer session and current group membership. The SQL
+list joins `im_group_member` and returns a summary only when its earliest
+source message is newer than that reader's join cursor; newly invited members
+cannot read a summary based on older conversation history. Summary text is
+stored only in the chat MySQL database and is never cached in the browser.
+
+Generation requires a locally running Ollama with a locally downloaded model.
+For example, run `ollama pull qwen3:4b`, then set
+`$env:IM_SUMMARY_MODEL = "qwen3:4b"` in the chat service PowerShell window
+before starting the service. By default no model is configured and generation
+returns 503 with an explanation. The endpoint is fixed to
+`127.0.0.1:11434`; `IM_OLLAMA_PORT` may change the local port, but no
+remote model URL can be configured. The service sends only the current
+member's latest 30 eligible messages (each capped at 500 characters) to that
+local endpoint; model failures return a generic error without message text.
+Ensure the selected model runs locally rather than using Ollama cloud models.

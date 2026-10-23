@@ -46,7 +46,8 @@ import {
 import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, type DirectMessage } from "./chatApi";
 import {
   createGroupChat, getGroupMessage, inviteGroupMembers, listGroups, loadGroupMessages,
-  markGroupRead, sendGroupMessage, syncGroupMessages, type GroupChat, type GroupMessage,
+  markGroupRead, sendGroupMessage, syncGroupMessages, listGroupSummaries, generateGroupSummary,
+  type GroupChat, type GroupMessage, type GroupSummary,
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, type MentionNotice } from "./noticeApi";
 import { syncForward } from "./incrementalSync";
@@ -185,6 +186,10 @@ const directSyncCursor = ref<number | null>(null);
 const serverGroups = ref<GroupChat[]>([]);
 const groupsNextCursor = ref<number | null>(null);
 const groupMessages = ref<GroupMessage[]>([]);
+const groupSummaries = ref<GroupSummary[]>([]);
+const summaryBusy = ref(false);
+const summaryError = ref("");
+let summarySeq = 0;
 const groupSyncCursor = ref<number | null>(null);
 const groupNextBeforeId = ref<number | null>(null);
 const groupBusy = ref(false);
@@ -252,6 +257,10 @@ watch(activeId, () => {
   mentionPickerOpen.value = false;
   mentionSelections.value = {};
   showSummary.value = false;
+  groupSummaries.value = [];
+  summaryBusy.value = false;
+  summaryError.value = "";
+  summarySeq++;
   showOlder.value = false;
   stopVoice();
   directMessages.value = [];
@@ -394,6 +403,46 @@ const summarySources = computed(() =>
     .filter((m) => m.kind !== "system" && m.senderId !== selfId)
     .slice(-3),
 );
+async function loadGroupSummaries() {
+  const groupId = serverGroupId(activeId.value);
+  const accountId = currentAccount.value?.id;
+  if (!groupId || !accountId || summaryBusy.value) return;
+  const sequence = ++summarySeq;
+  summaryBusy.value = true;
+  summaryError.value = "";
+  try {
+    const items = await listGroupSummaries(groupId);
+    if (sequence !== summarySeq || currentAccount.value?.id !== accountId
+        || serverGroupId(activeId.value) !== groupId) return;
+    groupSummaries.value = items;
+    showSummary.value = true;
+  } catch (error) {
+    if (sequence === summarySeq)
+      summaryError.value = error instanceof Error ? error.message : "摘要加载失败";
+  } finally {
+    if (sequence === summarySeq) summaryBusy.value = false;
+  }
+}
+async function createGroupSummary() {
+  const groupId = serverGroupId(activeId.value);
+  const accountId = currentAccount.value?.id;
+  if (!groupId || !accountId || summaryBusy.value) return;
+  const sequence = ++summarySeq;
+  summaryBusy.value = true;
+  summaryError.value = "";
+  try {
+    const summary = await generateGroupSummary(groupId);
+    if (sequence !== summarySeq || currentAccount.value?.id !== accountId
+        || serverGroupId(activeId.value) !== groupId) return;
+    groupSummaries.value = [summary, ...groupSummaries.value.filter((item) => item.id !== summary.id)].slice(0, 20);
+    showSummary.value = true;
+  } catch (error) {
+    if (sequence === summarySeq)
+      summaryError.value = error instanceof Error ? error.message : "摘要生成失败";
+  } finally {
+    if (sequence === summarySeq) summaryBusy.value = false;
+  }
+}
 function person(id: string): Person {
   return (
     friends.value.find((p) => p.id === id) ||
@@ -833,6 +882,10 @@ function applyAccount(account: Account) {
   knownPeers.value = loadKnownPeers(account);
   directMessages.value = [];
   groupMessages.value = [];
+  groupSummaries.value = [];
+  summaryBusy.value = false;
+  summaryError.value = "";
+  summarySeq++;
   directSyncCursor.value = null;
   groupSyncCursor.value = null;
   serverGroups.value = [];
@@ -1068,6 +1121,10 @@ async function signOut() {
   knownPeers.value = [];
   directMessages.value = [];
   groupMessages.value = [];
+  groupSummaries.value = [];
+  summaryBusy.value = false;
+  summaryError.value = "";
+  summarySeq++;
   directSyncCursor.value = null;
   groupSyncCursor.value = null;
   serverGroups.value = [];
@@ -2163,8 +2220,29 @@ onBeforeUnmount(() => {
             <div class="assist-label">
               <AppIcon name="alignLeft" :size="17" /><strong>对话摘要</strong>
             </div>
+            <template v-if="serverGroupId(activeId)">
+              <p class="assist-description">
+                只使用加入后可见的群消息，由本机模型生成；摘要仅对有权查看这些消息的群成员开放。
+              </p>
+              <button class="soft-button" type="button" :disabled="summaryBusy" @click="createGroupSummary">
+                <AppIcon name="sparkles" :size="15" /> {{ summaryBusy ? "处理中…" : "生成群聊摘要" }}
+              </button>
+              <button class="text-button" type="button" :disabled="summaryBusy" @click="loadGroupSummaries">
+                查看群内摘要
+              </button>
+              <p v-if="summaryError" class="error-text" role="alert">{{ summaryError }}</p>
+              <div v-if="showSummary" class="summary-card">
+                <p v-if="!groupSummaries.length">本群暂无你有权查看的摘要。</p>
+                <article v-for="item in groupSummaries" :key="item.id" class="group-summary-item">
+                  <small>消息 {{ item.firstMessageId }}–{{ item.lastMessageId }} ·
+                    {{ new Date(item.createdAt).toLocaleString("zh-CN") }}</small>
+                  <p class="group-summary-text">{{ item.content }}</p>
+                </article>
+              </div>
+            </template>
+            <template v-else>
             <p class="assist-description">
-              基于演示消息展示来源；真实 AI 分析待接入。
+              私聊仅展示本地演示消息线索；群聊摘要由本机模型生成。
             </p>
             <div class="segmented">
               <button
@@ -2208,6 +2286,7 @@ onBeforeUnmount(() => {
                   <AppIcon name="arrowUpRight" :size="14" /></button
               ></template>
             </div>
+            </template>
           </div>
           <div class="assist-section">
             <div class="assist-label">
@@ -2249,7 +2328,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="assistant-footer">
-          <span class="status-dot" /> 摘要、翻译、同步待接入接口
+          <span class="status-dot" /> 群聊摘要仅群成员可见 · 翻译待接入
         </div>
       </aside>
     </div>

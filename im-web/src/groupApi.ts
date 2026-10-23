@@ -17,6 +17,15 @@ export type GroupMessage = {
 };
 export type GroupPage = { messages: GroupMessage[]; nextBeforeId: number | null };
 export type GroupSyncPage = { messages: GroupMessage[]; nextAfterId: number | null };
+export type GroupSummary = {
+  id: number;
+  groupId: number;
+  requesterId: number;
+  firstMessageId: number;
+  lastMessageId: number;
+  content: string;
+  createdAt: string;
+};
 export type GroupsPage = { items: GroupChat[]; nextBeforeId: number | null };
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
@@ -58,3 +67,7 @@ export const sendGroupMessage = (id: number, clientMsgId: string, body: string, 
   request<GroupMessage>(`/${id}/messages`, { clientMsgId, body, mentionedUserIds });
 export const markGroupRead = (id: number, lastReadMessageId: number) =>
   request<void>(`/${id}/read`, { lastReadMessageId });
+export const listGroupSummaries = (id: number) =>
+  request<GroupSummary[]>(`/${id}/summaries`);
+export const generateGroupSummary = (id: number) =>
+  request<GroupSummary>(`/${id}/summaries`, {});

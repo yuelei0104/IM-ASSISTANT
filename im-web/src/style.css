@@ -882,6 +882,17 @@ svg {
   font-size: 11px;
   margin: 8px 0;
 }
+.group-summary-item + .group-summary-item {
+  border-top: 1px solid #e8f1f0;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+.summary-card .group-summary-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #253b45;
+  font-size: 13px;
+}
 .source-link {
   display: flex;
   justify-content: space-between;
