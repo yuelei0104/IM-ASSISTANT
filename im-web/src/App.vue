@@ -54,6 +54,11 @@ import { listTasks, createTask, completeTask, deleteTask, type PersonalTask } fr
 import { syncForward } from "./incrementalSync";
 import { resumeCursor, savedCursor, saveCursor } from "./syncCursor";
 import {
+  localSpeechConstructor, localSpeechAvailability, installLocalSpeech,
+  makeLocalRecognizer, readSpeechResults, type LocalRecognizer,
+  type LocalSpeechConstructor,
+} from "./localSpeech";
+import {
   initialState,
   selfId,
   type Conversation,
@@ -238,7 +243,12 @@ const focusId = ref("");
 const messageScroll = ref<HTMLElement | null>(null);
 const voiceActive = ref(false);
 const interim = ref("");
-let recognition: any = null;
+const voiceDraft = ref("");
+const voiceBusy = ref(false);
+const voiceInstallAvailable = ref(false);
+let voiceVersion = 0;
+let recognition: LocalRecognizer | null = null;
+let voiceRestart: ReturnType<typeof setTimeout> | undefined;
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 const nav: { id: Page; label: string; icon: string }[] = [
   { id: "chat", label: "消息", icon: "message" },
@@ -396,6 +406,7 @@ const canWrite = computed(
           (id) => id === selfId || data.value.friendIds.includes(id),
         )),
 );
+watch(canWrite, (allowed) => { if (!allowed) stopVoice(); });
 const candidates = computed(() =>
   friends.value.filter((p) => !active.value?.memberIds.includes(p.id)),
 );
@@ -1509,59 +1520,105 @@ function reset() {
   activeId.value = allConversations.value[0]?.id || "";
   notify("本地演示数据已重置，服务端待办和聊天记录不受影响");
 }
-function stopVoice() {
-  if (recognition) {
-    recognition.onend = null;
-    recognition.stop();
-    recognition = null;
-  }
+function stopVoice(discard = true) {
+  voiceVersion++;
   voiceActive.value = false;
+  voiceBusy.value = false;
+  if (voiceRestart) clearTimeout(voiceRestart);
+  voiceRestart = undefined;
+  if (recognition) {
+    const r = recognition;
+    recognition = null;
+    r.onend = null;
+    r.onerror = null;
+    r.onresult = null;
+    try { r.abort(); } catch { /* Browser may have ended recognition already. */ }
+  }
   interim.value = "";
+  if (discard) {
+    voiceDraft.value = "";
+    voiceInstallAvailable.value = false;
+  }
 }
-function toggleVoice() {
-  if (voiceActive.value) {
-    stopVoice();
-    return;
-  }
-  const Ctor =
-    (window as any).SpeechRecognition ||
-    (window as any).webkitSpeechRecognition;
-  if (!Ctor) {
-    notify("此浏览器不支持语音转写");
-    return;
-  }
-  const r = new Ctor();
-  r.lang = "zh-CN";
-  r.continuous = true;
-  r.interimResults = true;
-  r.onresult = (event: any) => {
-    let partial = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const text = event.results[i][0].transcript;
-      if (event.results[i].isFinal)
-        composer.value += `${composer.value ? " " : ""}${text}`;
-      else partial += text;
-    }
-    interim.value = partial;
+function beginLocalRecognition(Ctor: LocalSpeechConstructor, version: number) {
+  if (version !== voiceVersion || page.value !== "chat" || !canWrite.value || document.hidden) return;
+  let r: LocalRecognizer | null;
+  try { r = makeLocalRecognizer(Ctor); }
+  catch { notify("无法启动本机语音识别，请改用文字输入"); voiceActive.value = false; return; }
+  if (!r) { notify("此浏览器无法保证本机转写，请改用文字输入"); return; }
+  const seen = new Set<number>();
+  r.onresult = (event) => {
+    if (version !== voiceVersion || !canWrite.value) return;
+    const result = readSpeechResults(event, seen);
+    if (result.final) voiceDraft.value = [voiceDraft.value, result.final].filter(Boolean).join(" ").slice(0, 4000);
+    interim.value = result.interim;
   };
-  r.onerror = (event: any) => {
-    notify(
-      event.error === "not-allowed" ? "麦克风权限未开启" : "语音转写已停止",
-    );
-    stopVoice();
+  r.onerror = (event) => {
+    if (version !== voiceVersion) return;
+    notify(event.error === "not-allowed" ? "麦克风权限未开启" : "本机语音转写已停止，请检查语言包或麦克风");
+    stopVoice(false);
   };
   r.onend = () => {
+    if (recognition !== r || version !== voiceVersion) return;
     recognition = null;
-    voiceActive.value = false;
     interim.value = "";
+    if (voiceActive.value && !document.hidden && canWrite.value) {
+      voiceRestart = setTimeout(() => beginLocalRecognition(Ctor, version), 350);
+    }
   };
   try {
     r.start();
     recognition = r;
     voiceActive.value = true;
   } catch {
-    notify("无法启动语音转写");
+    voiceActive.value = false;
+    notify("本机转写启动失败，请检查麦克风和语言包");
   }
+}
+async function toggleVoice() {
+  if (voiceActive.value) { stopVoice(false); return; }
+  if (voiceBusy.value || !canWrite.value || page.value !== "chat") return;
+  const Ctor = localSpeechConstructor(window);
+  if (!Ctor) { notify("浏览器不支持本机语音识别，请改用文字输入"); return; }
+  const version = ++voiceVersion;
+  voiceBusy.value = true;
+  voiceInstallAvailable.value = false;
+  try {
+    const status = await localSpeechAvailability(Ctor);
+    if (version !== voiceVersion) return;
+    if (status === "available") beginLocalRecognition(Ctor, version);
+    else if (status === "downloadable") voiceInstallAvailable.value = true;
+    else notify(status === "downloading" ? "中文本机语音包正在下载，请稍后重试" : "中文本机语音识别不可用，请改用文字输入");
+  } catch {
+    if (version === voiceVersion) notify("无法检查本机语音识别能力，请改用文字输入");
+  } finally {
+    if (version === voiceVersion) voiceBusy.value = false;
+  }
+}
+async function installVoicePack() {
+  const Ctor = localSpeechConstructor(window);
+  if (!Ctor || !voiceInstallAvailable.value || voiceBusy.value) return;
+  const version = ++voiceVersion;
+  voiceBusy.value = true;
+  try {
+    const installed = await installLocalSpeech(Ctor);
+    if (version !== voiceVersion) return;
+    voiceInstallAvailable.value = false;
+    if (installed && await localSpeechAvailability(Ctor) === "available") {
+      if (version === voiceVersion) beginLocalRecognition(Ctor, version);
+    } else notify("中文语音包尚未就绪，请稍后重试");
+  } catch {
+    if (version === voiceVersion) notify("中文语音包安装失败，请稍后重试");
+  } finally {
+    if (version === voiceVersion) voiceBusy.value = false;
+  }
+}
+function acceptVoiceDraft() {
+  if (!voiceDraft.value.trim() || !canWrite.value) return;
+  stopVoice(false);
+  composer.value = [composer.value.trim(), voiceDraft.value.trim()].filter(Boolean).join(" ");
+  voiceDraft.value = "";
+  notify("已填入输入框，请检查后点击发送");
 }
 function visibility() {
   if (document.hidden) stopVoice();
@@ -2251,10 +2308,20 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="composer-zone">
-          <div v-if="voiceActive" class="voice-interim" role="status">
-            <span class="recording-dot" /> 正在转写，仅你可见
-            {{ interim ? `· ${interim}` : "· 请开始说话" }}
-            <button @click="stopVoice">停止</button>
+          <div v-if="voiceActive || voiceBusy || voiceDraft || voiceInstallAvailable" class="voice-interim" role="group" aria-label="本机语音转写预览">
+            <div class="voice-heading"><span v-if="voiceActive" class="recording-dot" />
+              <strong>{{ voiceActive ? "正在本机转写" : voiceBusy ? "正在准备本机转写" : "语音文字预览" }}</strong>
+              <span>仅自己可见 · 不会自动发送</span>
+            </div>
+            <p v-if="voiceInstallAvailable">浏览器需要下载中文本机语音包，确认后才会开始下载。</p>
+            <button v-if="voiceInstallAvailable" type="button" :disabled="voiceBusy" @click="installVoicePack">安装中文语音包</button>
+            <p v-if="voiceDraft" class="voice-transcript" aria-live="polite">{{ voiceDraft }}</p>
+            <p v-if="voiceActive" class="voice-partial">{{ interim || "请开始说话，识别文字会显示在这里…" }}</p>
+            <div class="voice-actions">
+              <button v-if="voiceActive" type="button" @click="stopVoice(false)">停止录音</button>
+              <button v-if="voiceDraft" type="button" @click="acceptVoiceDraft">填入输入框</button>
+              <button type="button" @click="stopVoice()">丢弃</button>
+            </div>
           </div>
           <div v-if="!canWrite" class="read-only">
             <AppIcon name="lock" :size="16" /> 已解除好友关系，此对话为只读
@@ -2279,8 +2346,9 @@ onBeforeUnmount(() => {
                 <button
                   class="tool-button"
                   :class="{ recording: voiceActive }"
-                  :title="voiceActive ? '停止语音转写' : '语音转写（手动发送）'"
-                  :aria-label="voiceActive ? '停止语音转写' : '开始语音转写'"
+                  :title="voiceActive ? '停止录音' : '本机语音转写（确认后发送）'"
+                  :aria-label="voiceActive ? '停止录音' : '开始本机语音转写'"
+                  :disabled="voiceBusy"
                   @click="toggleVoice"
                 >
                   <AppIcon name="mic" :size="18" /></button

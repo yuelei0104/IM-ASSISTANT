@@ -682,19 +682,41 @@ svg {
   background: #177a82;
 }
 .voice-interim {
-  font-size: 11px;
+  font-size: 13px;
   color: #458d91;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border: 1px solid #cddde6;
+  border-radius: 14px;
+  background: #f5fafb;
+}
+.voice-heading,
+.voice-actions {
   display: flex;
   align-items: center;
-  gap: 7px;
+  flex-wrap: wrap;
+  gap: 9px;
 }
+.voice-heading span:last-child { font-size: 12px; opacity: .8; }
+.voice-transcript {
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #243746;
+  line-height: 1.6;
+}
+.voice-partial { min-height: 20px; color: #697d8b; }
+.voice-actions { margin-top: 8px; }
 .voice-interim button {
-  border: 0;
-  background: transparent;
-  color: #168790;
-  text-decoration: underline;
+  cursor: pointer;
+  border: 1px solid #cddde6;
+  border-radius: 7px;
+  background: white;
+  padding: 5px 9px;
+  color: #287a86;
 }
+.voice-interim button:disabled { opacity: .55; cursor: not-allowed; }
 .recording-dot {
   width: 7px;
   height: 7px;
