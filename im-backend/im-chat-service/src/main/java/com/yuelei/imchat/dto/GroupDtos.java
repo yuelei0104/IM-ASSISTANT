@@ -20,5 +20,10 @@ public final class GroupDtos {
     public record SendGroup(
             @NotBlank @Pattern(regexp = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}") String clientMsgId,
             @NotBlank @Size(max = 4000) String body,
-            @NotNull @Size(max = 10) List<Long> mentionedUserIds) { }
+            @NotNull @Size(max = 10) List<Long> mentionedUserIds,
+            String kind) {
+        public SendGroup(String clientMsgId, String body, List<Long> mentionedUserIds) {
+            this(clientMsgId, body, mentionedUserIds, null);
+        }
+    }
 }

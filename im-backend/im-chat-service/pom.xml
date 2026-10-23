@@ -11,6 +11,7 @@
     </parent>
     <artifactId>im-chat-service</artifactId>
     <dependencies>
+        <dependency><groupId>com.yuelei</groupId><artifactId>im-common</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webmvc</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-websocket</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-redis</artifactId></dependency>

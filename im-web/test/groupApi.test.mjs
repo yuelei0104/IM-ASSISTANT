@@ -23,6 +23,7 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   await loadGroupMessages(4, 31);
   await syncGroupMessages(4, 31);
   await sendGroupMessage(4, "e9873e73-1326-4329-a4c0-936912a48e37", "你好");
+  await sendGroupMessage(4, "e9873e73-1326-4329-a4c0-936912a48e38", "字幕片段", [], "CAPTION");
   await markGroupRead(4, 34);
   assert.deepEqual(await listGroupSummaries(4), []);
   await generateGroupSummary(4);
@@ -32,12 +33,15 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   assert.equal(calls[3].url, "/api/chats/groups/4/messages?limit=50&beforeId=31");
   assert.equal(calls[4].url, "/api/chats/groups/4/messages/sync?afterId=31&limit=50");
   assert.deepEqual(JSON.parse(calls[5].options.body), {
-    clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e37", body: "你好", mentionedUserIds: [],
+    clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e37", body: "你好", mentionedUserIds: [], kind: "TEXT",
   });
-  assert.deepEqual(JSON.parse(calls[6].options.body), { lastReadMessageId: 34 });
-  assert.equal(calls[7].url, "/api/chats/groups/4/summaries");
+  assert.deepEqual(JSON.parse(calls[6].options.body), {
+    clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e38", body: "字幕片段", mentionedUserIds: [], kind: "CAPTION",
+  });
+  assert.deepEqual(JSON.parse(calls[7].options.body), { lastReadMessageId: 34 });
   assert.equal(calls[8].url, "/api/chats/groups/4/summaries");
-  assert.equal(calls[8].options.method, "POST");
+  assert.equal(calls[9].url, "/api/chats/groups/4/summaries");
+  assert.equal(calls[9].options.method, "POST");
 });
 
 test("group requests fail without a session before touching the network", async () => {

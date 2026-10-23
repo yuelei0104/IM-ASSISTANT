@@ -34,6 +34,7 @@ public class DirectMessageService {
         long senderId = access.requireFriend(authorization, friendId);
         String body = input.body().trim();
         if (body.isEmpty()) throw new ChatException(HttpStatus.BAD_REQUEST, "消息不能为空");
+        // The upsert obtains an exclusive pair lock even when the row already exists.
         // Keep each pair's IDs in commit order, including concurrent sends from both users.
         messages.ensurePair(Math.min(senderId, friendId), Math.max(senderId, friendId));
         messages.lockPair(Math.min(senderId, friendId), Math.max(senderId, friendId));

@@ -2,6 +2,7 @@ package com.yuelei.imbackend.controller;
 
 import com.yuelei.imbackend.dto.AuthDtos.*;
 import com.yuelei.imbackend.service.AuthService;
+import com.yuelei.imcommon.Identity;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -47,8 +48,6 @@ public class AuthController {
     public Account me(@RequestHeader(value = "Authorization", required = false) String authorization) {
         return auth.me(authorization);
     }
-
-    public record Identity(long userId) { }
 
     @GetMapping("/identity")
     public Identity identity(@RequestHeader(value = "Authorization", required = false) String authorization) {

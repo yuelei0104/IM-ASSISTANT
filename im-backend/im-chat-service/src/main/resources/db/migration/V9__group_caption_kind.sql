@@ -1,0 +1,2 @@
+ALTER TABLE im_group_message
+    ADD COLUMN kind VARCHAR(12) NOT NULL DEFAULT 'TEXT';

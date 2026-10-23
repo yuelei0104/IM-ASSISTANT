@@ -250,6 +250,7 @@ let pendingGroupRefresh = false;
 let chatSocket: ReturnType<typeof connectChatSocket> | null = null;
 let lastHealthyPoll = 0;
 let pendingSend: { peerId: number; text: string; clientMsgId: string } | null = null;
+let pendingCaption: { groupId: number; text: string; clientMsgId: string } | null = null;
 const contactRequests = ref<ContactRequest[]>([]);
 const contactsBusy = ref(false);
 const contactsError = ref("");
@@ -370,7 +371,7 @@ function renderMessage(m: DirectMessage | GroupMessage): Message {
     senderId: m.senderId === currentAccount.value?.id ? selfId : `user-${m.senderId}`,
     text: m.body,
     time: new Date(m.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-    kind: "text",
+    kind: "groupId" in m && m.kind === "CAPTION" ? "voice" : "text",
   };
 }
 const messages = computed<Message[]>(() => directPeer(activeId.value)
@@ -930,6 +931,7 @@ function applyAccount(account: Account) {
   groupLastRead.clear();
   groupReadInFlight.clear();
   groupPendingSend = null;
+  pendingCaption = null;
   mentionNotices.value = [];
   noticeNextBeforeId.value = null;
   noticeUnreadCount.value = 0;
@@ -1180,6 +1182,7 @@ async function signOut() {
   groupLastRead.clear();
   groupReadInFlight.clear();
   groupPendingSend = null;
+  pendingCaption = null;
   mentionNotices.value = [];
   noticeNextBeforeId.value = null;
   noticeUnreadCount.value = 0;
@@ -1776,6 +1779,31 @@ function acceptVoiceDraft() {
   composer.value = [composer.value.trim(), voiceDraft.value.trim()].filter(Boolean).join(" ");
   voiceDraft.value = "";
   notify("已填入输入框，请检查后点击发送");
+}
+async function shareGroupCaption() {
+  const groupId = serverGroupId(activeId.value);
+  const accountId = currentAccount.value?.id;
+  const text = voiceDraft.value.trim();
+  if (!groupId || !accountId || !text || !canWrite.value || sending.value || contextActive.value) return;
+  stopVoice(false);
+  const clientMsgId = pendingCaption?.groupId === groupId && pendingCaption.text === text
+    ? pendingCaption.clientMsgId : crypto.randomUUID();
+  pendingCaption = { groupId, text, clientMsgId };
+  sending.value = true;
+  try {
+    const saved = await sendGroupMessage(groupId, clientMsgId, text, [], "CAPTION");
+    if (currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return;
+    mergeGroup([saved]);
+    pendingCaption = null;
+    voiceDraft.value = "";
+    chatError.value = "";
+    nextTick(scrollBottom);
+  } catch (error) {
+    if (currentAccount.value?.id === accountId)
+      notify(error instanceof Error ? error.message : "字幕发送失败，请重试");
+  } finally {
+    sending.value = false;
+  }
 }
 function visibility() {
   if (document.hidden) stopVoice();
@@ -2515,7 +2543,7 @@ onBeforeUnmount(() => {
           <div v-if="voiceActive || voiceBusy || voiceDraft || voiceInstallAvailable" class="voice-interim" role="group" aria-label="本机语音转写预览">
             <div class="voice-heading"><span v-if="voiceActive" class="recording-dot" />
               <strong>{{ voiceActive ? "正在本机转写" : voiceBusy ? "正在准备本机转写" : "语音文字预览" }}</strong>
-              <span>仅自己可见 · 不会自动发送</span>
+              <span>预览仅自己可见 · 发送后仅讨论室成员可看</span>
             </div>
             <p v-if="voiceInstallAvailable">浏览器需要下载中文本机语音包，确认后才会开始下载。</p>
             <button v-if="voiceInstallAvailable" type="button" :disabled="voiceBusy" @click="installVoicePack">安装中文语音包</button>
@@ -2524,6 +2552,7 @@ onBeforeUnmount(() => {
             <div class="voice-actions">
               <button v-if="voiceActive" type="button" @click="stopVoice(false)">停止录音</button>
               <button v-if="voiceDraft" type="button" @click="acceptVoiceDraft">填入输入框</button>
+              <button v-if="voiceDraft && serverGroupId(activeId)" type="button" :disabled="sending || contextActive" @click="shareGroupCaption">{{ sending ? "发送中…" : "分享字幕到讨论室" }}</button>
               <button type="button" @click="stopVoice()">丢弃</button>
             </div>
           </div>
