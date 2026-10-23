@@ -1780,12 +1780,13 @@ function acceptVoiceDraft() {
   voiceDraft.value = "";
   notify("已填入输入框，请检查后点击发送");
 }
-async function shareGroupCaption() {
+async function shareGroupCaption(fromComposer = false) {
   const groupId = serverGroupId(activeId.value);
   const accountId = currentAccount.value?.id;
-  const text = voiceDraft.value.trim();
+  const text = (fromComposer ? composer.value : voiceDraft.value).trim();
   if (!groupId || !accountId || !text || !canWrite.value || sending.value || contextActive.value) return;
-  stopVoice(false);
+  if (text.length > 4000) { chatError.value = "字幕最多 4000 字"; return; }
+  if (!fromComposer) stopVoice(false);
   const clientMsgId = pendingCaption?.groupId === groupId && pendingCaption.text === text
     ? pendingCaption.clientMsgId : crypto.randomUUID();
   pendingCaption = { groupId, text, clientMsgId };
@@ -1795,7 +1796,10 @@ async function shareGroupCaption() {
     if (currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return;
     mergeGroup([saved]);
     pendingCaption = null;
-    voiceDraft.value = "";
+    if (fromComposer) {
+      composer.value = "";
+      mentionSelections.value = {};
+    } else voiceDraft.value = "";
     chatError.value = "";
     nextTick(scrollBottom);
   } catch (error) {
@@ -2552,7 +2556,7 @@ onBeforeUnmount(() => {
             <div class="voice-actions">
               <button v-if="voiceActive" type="button" @click="stopVoice(false)">停止录音</button>
               <button v-if="voiceDraft" type="button" @click="acceptVoiceDraft">填入输入框</button>
-              <button v-if="voiceDraft && serverGroupId(activeId)" type="button" :disabled="sending || contextActive" @click="shareGroupCaption">{{ sending ? "发送中…" : "分享字幕到讨论室" }}</button>
+              <button v-if="voiceDraft && serverGroupId(activeId)" type="button" :disabled="sending || contextActive" @click="shareGroupCaption(false)">{{ sending ? "发送中…" : "分享字幕到讨论室" }}</button>
               <button type="button" @click="stopVoice()">丢弃</button>
             </div>
           </div>
@@ -2588,6 +2592,15 @@ onBeforeUnmount(() => {
                   @click="toggleVoice"
                 >
                   <AppIcon name="mic" :size="18" /></button
+                ><button
+                  v-if="serverGroupId(activeId)"
+                  class="tool-button caption-button"
+                  title="将输入框文字作为字幕分享给讨论室成员"
+                  aria-label="作为字幕分享"
+                  :disabled="!composer.trim() || sending"
+                  @click="shareGroupCaption(true)"
+                >
+                  <AppIcon name="alignLeft" :size="18" /> 作为字幕发送</button
                 ><button
                   v-if="serverGroupId(activeId)"
                   class="tool-button"

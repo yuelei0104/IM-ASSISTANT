@@ -208,7 +208,10 @@ Direct-chat discussion hints and tasks remain browser demos.
 Chat Flyway V9 adds a `kind` to group messages (`TEXT` by default, `CAPTION`
 for explicitly shared speech text). In a discussion room, the microphone
 first shows an on-device preview visible only to the speaker. Clicking
-**分享字幕到讨论室** sends that reviewed text as a normal persisted group message;
+**分享字幕到讨论室** sends that reviewed text as a normal persisted group message.
+For a remote-control session without a microphone, type a caption in the
+discussion room composer and click **作为字幕发送**; this checks the server flow,
+but does not validate speech recognition. Both paths require an explicit click;
 the server requires current membership and returns it through the same
 member-scoped history and recovery APIs. It stores text, not microphone
 audio. Captions are included in later group summaries when eligible under
@@ -216,8 +219,8 @@ the usual join cursor. This is a manual caption-sharing flow, not automatic
 continuous meeting transcription; the local browser must support and have
 the Chinese speech pack installed.
 For a local check, sign in to two existing members in separate browsers, open
-the same discussion room, speak into A's microphone, review the preview and
-click **分享字幕到讨论室**. B should see a labeled speech-text message; refresh B
+the same discussion room, use A's microphone preview or type a caption and
+click the corresponding share action. B should see a labeled caption; refresh B
 to confirm it persists. Start a new room member after the send and confirm
 that member cannot read earlier caption history. The summary button uses the
 same recent, membership-scoped messages as before. No session-token copying

@@ -715,6 +715,14 @@ svg {
   background: #e8f5f4;
   color: #278f93;
 }
+.caption-button {
+  display: inline-flex;
+  gap: 4px;
+  color: #287a86;
+  font-size: 11px;
+  font-weight: 600;
+}
+.caption-button:disabled { opacity: .5; cursor: not-allowed; }
 .composer-tip {
   font-size: 10px;
   color: #afbdc2;
