@@ -61,6 +61,18 @@
     <delete id="removeMember">
         DELETE FROM im_group_member WHERE group_id = #{groupId} AND user_id = #{userId}
     </delete>
+    <update id="transferOwner">
+        UPDATE im_chat_group SET owner_id = #{ownerId} WHERE id = #{groupId}
+    </update>
+    <delete id="deleteMessages">
+        DELETE FROM im_group_message WHERE group_id = #{groupId}
+    </delete>
+    <delete id="deleteMembers">
+        DELETE FROM im_group_member WHERE group_id = #{groupId}
+    </delete>
+    <delete id="deleteGroup">
+        DELETE FROM im_chat_group WHERE id = #{groupId}
+    </delete>
     <select id="latestId" resultType="long">
         SELECT COALESCE(MAX(id), 0) FROM im_group_message WHERE group_id = #{groupId}
     </select>

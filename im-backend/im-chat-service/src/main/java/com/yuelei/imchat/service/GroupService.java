@@ -1,6 +1,7 @@
 package com.yuelei.imchat.service;
 
 import com.yuelei.imchat.dao.GroupDao;
+import com.yuelei.imchat.dao.GroupSummaryDao;
 import com.yuelei.imchat.dao.NoticeDao;
 import com.yuelei.imchat.dto.GroupDtos;
 import com.yuelei.imchat.exception.ChatException;
@@ -22,13 +23,15 @@ public class GroupService {
     private final UserAccessClient access;
     private final ApplicationEventPublisher events;
     private final NoticeDao notices;
+    private final GroupSummaryDao summaries;
 
     public GroupService(GroupDao dao, UserAccessClient access, ApplicationEventPublisher events,
-                        NoticeDao notices) {
+                        NoticeDao notices, GroupSummaryDao summaries) {
         this.dao = dao;
         this.access = access;
         this.events = events;
         this.notices = notices;
+        this.summaries = summaries;
     }
 
     @Transactional
@@ -79,7 +82,9 @@ public class GroupService {
         if (row == null) throw new ChatException(HttpStatus.NOT_FOUND, "讨论室不存在");
         if (row.ownerId() != owner) throw new ChatException(HttpStatus.FORBIDDEN, "只有群主可以邀请好友");
         List<Long> invitees = validateFriends(authorization, owner, input.friendIds());
-        dao.lockGroup(groupId); // Serialize invitations with sends before capturing the join cursor.
+        var locked = dao.lockGroup(groupId); // Serialize invitations with sends and owner changes.
+        if (locked == null) throw new ChatException(HttpStatus.NOT_FOUND, "讨论室不存在");
+        if (locked.ownerId() != owner) throw new ChatException(HttpStatus.FORBIDDEN, "群主已变更");
         var existing = new HashSet<>(dao.memberIds(groupId));
         if (existing.size() + invitees.size() > 50 || invitees.stream().anyMatch(existing::contains))
             throw new ChatException(HttpStatus.CONFLICT, "成员已加入或讨论室人数超过 50");
@@ -107,6 +112,37 @@ public class GroupService {
         if (memberId <= 0 || memberId == userId)
             throw new ChatException(HttpStatus.BAD_REQUEST, "不能移除群主");
         removeCurrentMember(groupId, memberId);
+    }
+
+    @Transactional
+    public GroupChat transferOwner(String authorization, long groupId, long memberId) {
+        long userId = access.requireUser(authorization);
+        var group = lockedGroup(groupId);
+        if (group.ownerId() != userId)
+            throw new ChatException(HttpStatus.FORBIDDEN, "只有群主可以转让讨论室");
+        if (memberId <= 0 || memberId == userId || dao.membership(groupId, memberId) == null)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "只能转让给当前讨论室的其他成员");
+        if (dao.transferOwner(groupId, memberId) != 1)
+            throw new ChatException(HttpStatus.CONFLICT, "群主转让失败");
+        events.publishEvent(new GroupEvent(groupId, 0, dao.memberIds(groupId)));
+        return detail(groupId);
+    }
+
+    @Transactional
+    public void dissolve(String authorization, long groupId) {
+        long userId = access.requireUser(authorization);
+        var group = lockedGroup(groupId);
+        if (group.ownerId() != userId)
+            throw new ChatException(HttpStatus.FORBIDDEN, "只有群主可以解散讨论室");
+        var recipients = List.copyOf(dao.memberIds(groupId));
+        // Child rows must be removed before the group because the schema has foreign keys.
+        notices.deleteForGroup(groupId);
+        summaries.deleteForGroup(groupId);
+        dao.deleteMessages(groupId);
+        dao.deleteMembers(groupId);
+        if (dao.deleteGroup(groupId) != 1)
+            throw new ChatException(HttpStatus.CONFLICT, "讨论室解散失败");
+        events.publishEvent(new GroupEvent(groupId, 0, recipients));
     }
 
     private GroupDao.GroupRow lockedGroup(long groupId) {

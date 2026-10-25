@@ -235,8 +235,8 @@ or Python probe is needed for this check.
 
 For a repeatable API-level privacy check without copying session tokens, run
 the probe from the repository root after starting both services with the
-`dev` profile. It creates three disposable accounts, two captions and one
-mention in the local database; no microphone or Ollama installation is needed:
+`dev` profile. It creates three disposable accounts and a temporary group,
+then dissolves the group; no microphone or Ollama installation is needed:
 
 ```powershell
 Set-Location D:\im-assistant
@@ -248,6 +248,13 @@ lookup and summaries; it then invites a new member and checks that pre-join
 captions stay hidden while post-join captions remain visible. If Ollama and
 `IM_SUMMARY_MODEL` are running, add `--check-summary` to also generate a
 summary before the invitation and verify that the newcomer cannot list it.
+It also verifies leaving, removal, transfer to a current member and dissolution
+by the new owner. The original owner remains a member until leaving; after
+dissolution the group and its messages, mention notices, summaries and
+memberships are deleted in one transaction. `POST /api/chats/groups/{id}/owner`
+accepts `{ "memberId": 123 }` from the current owner; `DELETE /api/chats/groups/{id}`
+requires the current owner. Other members receive a refresh event that removes
+the room from their UI. A sole owner can dissolve directly.
 The script sends requests only to loopback ports 8081 and 8082, and keeps
 temporary bearer tokens in memory. A passing probe does not validate browser
 speech recognition, which needs a microphone.

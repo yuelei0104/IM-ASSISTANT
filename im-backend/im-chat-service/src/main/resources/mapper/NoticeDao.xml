@@ -52,4 +52,9 @@
         SET n.read_at = CURRENT_TIMESTAMP(3)
         WHERE n.recipient_id = #{userId} AND n.read_at IS NULL AND m.id &gt; gm.joined_after_id
     </update>
+    <delete id="deleteForGroup">
+        DELETE n FROM im_group_mention_notice n
+        JOIN im_group_message m ON m.id = n.message_id
+        WHERE m.group_id = #{groupId}
+    </delete>
 </mapper>

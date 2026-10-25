@@ -46,6 +46,7 @@ import {
 import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, searchDirectMessages, type DirectMessage } from "./chatApi";
 import {
   createGroupChat, getGroup, getGroupMessage, inviteGroupMembers, leaveGroup, removeGroupMember,
+  transferGroupOwner, dissolveGroup,
   listGroups, loadGroupMessages,
   markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages, listGroupSummaries, generateGroupSummary,
   type GroupChat, type GroupMessage, type GroupSummary,
@@ -1614,6 +1615,38 @@ async function removeActiveGroupMember(id: string) {
     notify("成员已移出讨论室");
   } catch (error) {
     notify(error instanceof Error ? error.message : "移除失败");
+  } finally {
+    groupBusy.value = false;
+  }
+}
+async function transferActiveGroupOwner(id: string) {
+  const groupId = serverGroupId(activeId.value);
+  const memberId = Number(id.slice(5));
+  if (!groupId || active.value?.ownerId !== selfId || !Number.isSafeInteger(memberId) ||
+      memberId <= 0 || groupBusy.value ||
+      !window.confirm(`确定将讨论室群主转让给 ${person(id).name}？转让后你仍是群成员。`)) return;
+  groupBusy.value = true;
+  try {
+    const updated = await transferGroupOwner(groupId, memberId);
+    serverGroups.value = serverGroups.value.map((group) => group.id === groupId ? updated : group);
+    notify("群主已转让，你现在可以退出讨论室");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "转让失败");
+  } finally {
+    groupBusy.value = false;
+  }
+}
+async function dissolveActiveGroup() {
+  const groupId = serverGroupId(activeId.value);
+  if (!groupId || active.value?.ownerId !== selfId || groupBusy.value ||
+      !window.confirm(`确定解散「${active.value.name}」？所有成员将失去访问权限，群消息和摘要会被永久删除。`)) return;
+  groupBusy.value = true;
+  try {
+    await dissolveGroup(groupId);
+    forgetGroup(groupId);
+    notify("讨论室已解散");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "解散失败");
   } finally {
     groupBusy.value = false;
   }
@@ -3390,15 +3423,22 @@ onBeforeUnmount(() => {
             }}</span
             ><span>{{ person(id).name }}</span
             ><small v-if="active.ownerId === id">群主</small>
-            <button v-else-if="active.ownerId === 'me'" class="text-button member-remove"
-              :disabled="groupBusy" :aria-label="`移出 ${person(id).name}`"
-              @click="removeActiveGroupMember(id)">移出</button>
+            <span v-else-if="active.ownerId === 'me'" class="member-actions">
+              <button class="text-button" :disabled="groupBusy"
+                :aria-label="`转让群主给 ${person(id).name}`"
+                @click="transferActiveGroupOwner(id)">转让群主</button>
+              <button class="text-button" :disabled="groupBusy"
+                :aria-label="`移出 ${person(id).name}`"
+                @click="removeActiveGroupMember(id)">移出</button>
+            </span>
           </div>
           <p v-if="active.ownerId !== 'me'" class="drawer-hint">
             仅群主可邀请自己的好友。
           </p>
           <button v-if="active.ownerId !== 'me'" class="text-button drawer-leave"
-            :disabled="groupBusy" @click="leaveActiveGroup">退出讨论室</button></template
+            :disabled="groupBusy" @click="leaveActiveGroup">退出讨论室</button>
+          <button v-else class="text-button drawer-dissolve"
+            :disabled="groupBusy" @click="dissolveActiveGroup">解散讨论室</button></template
         >
         <div class="drawer-section-heading"><strong>会话偏好</strong></div>
         <label class="drawer-toggle"

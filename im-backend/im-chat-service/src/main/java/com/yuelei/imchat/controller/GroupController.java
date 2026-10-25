@@ -54,6 +54,19 @@ public class GroupController {
         groups.remove(auth, groupId, memberId);
     }
 
+    @PostMapping("/{groupId}/owner")
+    public GroupChat transferOwner(@RequestHeader(value = "Authorization", required = false) String auth,
+                                   @PathVariable long groupId, @Valid @RequestBody GroupDtos.TransferOwner request) {
+        return groups.transferOwner(auth, groupId, request.memberId());
+    }
+
+    @DeleteMapping("/{groupId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void dissolve(@RequestHeader(value = "Authorization", required = false) String auth,
+                         @PathVariable long groupId) {
+        groups.dissolve(auth, groupId);
+    }
+
     @PostMapping("/{groupId}/messages")
     public GroupMessage send(@RequestHeader(value = "Authorization", required = false) String auth,
                              @PathVariable long groupId, @Valid @RequestBody GroupDtos.SendGroup request) {

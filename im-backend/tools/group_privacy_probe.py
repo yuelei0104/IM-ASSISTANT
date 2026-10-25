@@ -197,12 +197,32 @@ def main():
     expect("former member cannot send", call(args.chat_url, path + "/messages", c, {
         "clientMsgId": str(uuid.uuid4()), "body": "不得发送", "mentionedUserIds": [],
     }), 403)
+    expect("nonowner cannot transfer", call(args.chat_url, path + "/owner", b,
+           {"memberId": owner}), 403)
+    expect("owner cannot transfer to former member", call(args.chat_url, path + "/owner", a,
+           {"memberId": newcomer}), 400)
+    transferred = expect("transfer to current member", call(args.chat_url, path + "/owner", a,
+           {"memberId": member}), 200)
+    check(transferred["ownerId"] == member and set(transferred["memberIds"]) == {owner, member},
+          "owner transfer changed membership")
+    expect("former owner cannot dissolve", call(args.chat_url, path, a, method="DELETE"), 403)
+    expect("former owner leaves", call(args.chat_url, path + "/members/me", a, method="DELETE"), 204)
+    expect("new owner dissolves", call(args.chat_url, path, b, method="DELETE"), 204)
+    for label, token in (("former owner", a), ("new owner", b), ("former member", c)):
+        groups = expect(label + " groups", call(args.chat_url, "/api/chats/groups", token), 200)
+        check(all(item["id"] != group_id for item in groups["items"]),
+              label + " still lists dissolved group")
+        expect(label + " cannot read dissolved group", call(args.chat_url, path, token), 403)
+    expect("cannot send to dissolved group", call(args.chat_url, path + "/messages", b, {
+        "clientMsgId": str(uuid.uuid4()), "body": "不得发送", "mentionedUserIds": [],
+    }), 404)
     print("PASS: outsider denied; pre-join captions hidden across history/sync/search/direct lookup;")
-    print("      post-join caption visible; leave/removal revoke access and mentions; rejoin hides old content"
+    print("      post-join caption visible; leave/removal revoke access and mentions; rejoin hides old content;"
+          " ownership transfer and dissolution enforced"
           + ("; pre-join summary hidden" if summary_id else ""))
     if not args.check_summary:
         print("Summary content boundary not exercised (use --check-summary with a local model).")
-    print("Three disposable accounts, two captions and one mention remain in the local development database.")
+    print("Three disposable accounts remain in the local development database; the test group is dissolved.")
 
 
 if __name__ == "__main__":
