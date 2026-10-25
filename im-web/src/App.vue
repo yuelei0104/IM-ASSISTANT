@@ -780,20 +780,24 @@ function applyGroupRecall(recall: MessageRecall) {
     contextTarget.value = redact(contextTarget.value);
   historyResults.value = historyResults.value.filter((m) => !("groupId" in m) || m.id !== recall.messageId);
   // A cached summary may contain text from the recalled message.
+  summarySeq++;
+  summaryBusy.value = false;
   groupSummaries.value = [];
-  if (showSummary.value) void loadGroupSummaries();
 }
 async function syncGroupRecalls(groupId: number, accountId: number, sequence: number) {
+  let changed = false;
   await syncForward(groupRecallCursor.value,
     async (cursor) => {
       const page = await listGroupRecalls(groupId, cursor);
       return { messages: page.items, nextAfterId: page.nextAfterId };
     }, (items, cursor) => {
       if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return false;
+      changed = changed || items.length > 0;
       items.forEach(applyGroupRecall);
       groupRecallCursor.value = cursor;
       return true;
     });
+  if (changed && showSummary.value && sequence === chatSeq) void loadGroupSummaries();
 }
 async function markVisibleGroupRead(groupId: number) {
   const accountId = currentAccount.value?.id;
@@ -1502,7 +1506,10 @@ async function recallVisibleMessage(m: Message) {
     if (currentAccount.value?.id !== accountId || activeId.value !== conversationId) return;
     const recall = { id: 0, messageId, recalledAt: new Date().toISOString() };
     if (peerId) applyDirectRecall(recall);
-    else applyGroupRecall(recall);
+    else {
+      applyGroupRecall(recall);
+      if (showSummary.value) void loadGroupSummaries();
+    }
     notify("消息已撤回");
   } catch (error) {
     notify(error instanceof Error ? error.message : "撤回失败");
