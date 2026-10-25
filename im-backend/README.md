@@ -301,6 +301,32 @@ $env:VITE_IM_GATEWAY_URL = 'http://127.0.0.1:8080'
 npm run dev
 ```
 
+After rebuilding and restarting chat-service, it also exposes
+`http://127.0.0.1:8082/actuator/health`. Check the three backend processes in
+a separate PowerShell window without closing their startup windows:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8080,8081,8082 -State Listen -ErrorAction SilentlyContinue |
+  Select-Object LocalAddress,LocalPort,OwningProcess
+Invoke-RestMethod http://127.0.0.1:8081/actuator/health
+Invoke-RestMethod http://127.0.0.1:8082/actuator/health
+Invoke-RestMethod http://127.0.0.1:8080/actuator/health
+```
+
+An `UP` response from a backend confirms that process is running; it does not
+replace an end-to-end HTTP or WebSocket check. GitHub Actions runs the complete
+Maven unit tests, frontend tests, and frontend build on pull requests and
+pushes to `main`. Locally, run the same checks from their respective folders:
+
+```powershell
+Set-Location D:\im-assistant\im-backend
+.\mvnw.cmd test
+Set-Location D:\im-assistant\im-web
+npm ci
+npm test
+npm run build
+```
+
 In the `dev` profile, user-service HTTP and chat-service WebSocket accept
 loopback browser origins on any local port, so Vite can choose the next free
 port. These services still bind to 127.0.0.1 for local development.
