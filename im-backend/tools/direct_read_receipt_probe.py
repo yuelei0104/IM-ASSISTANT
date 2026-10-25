@@ -18,8 +18,9 @@ def main():
     parser.add_argument("--user-url", type=loopback_url, default="http://127.0.0.1:8081")
     parser.add_argument("--chat-url", type=loopback_url, default="http://127.0.0.1:8082")
     args = parser.parse_args()
-    sender_id, _, sender = new_account(args.user_url, "sender")
-    reader_id, reader_handle, reader = new_account(args.user_url, "reader")
+    # new_account includes this role in the unique handle (maximum 20 characters).
+    sender_id, _, sender = new_account(args.user_url, "a")
+    reader_id, reader_handle, reader = new_account(args.user_url, "b")
     expect("friend request", call(args.user_url, "/api/contacts/requests", sender,
                                   {"handle": reader_handle}), 202)
     requests = expect("friend requests", call(args.user_url, "/api/contacts/requests", reader), 200)
