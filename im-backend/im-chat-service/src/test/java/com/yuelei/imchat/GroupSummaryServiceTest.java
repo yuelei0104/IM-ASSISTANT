@@ -37,7 +37,7 @@ class GroupSummaryServiceTest {
     void generateUsesOnlyVisibleMessagesAndSavesAGroupScopedSummary() {
         when(access.requireUser("Bearer member")).thenReturn(23L);
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
-        var older = new GroupMessage(43, 4, 9, "old", "前", LocalDateTime.now());
+        var older = new GroupMessage(43, 4, 9, "old", "字幕内容", "CAPTION", LocalDateTime.now());
         var newer = new GroupMessage(51, 4, 10, "new", "后", LocalDateTime.now());
         when(groups.history(4, 42, null, 30)).thenReturn(List.of(newer, older));
         when(generator.summarize(List.of(older, newer))).thenReturn("群内结论");
@@ -76,5 +76,34 @@ class GroupSummaryServiceTest {
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42), null);
         assertThrows(ChatException.class, () -> service.generate("Bearer member", 4));
         verify(summaries, never()).insert(any());
+    }
+
+    @Test
+    void rejoiningAfterModelCallCannotSaveSummaryOfEarlierCaptions() {
+        when(access.requireUser("Bearer member")).thenReturn(23L);
+        when(groups.membership(4, 23)).thenReturn(
+                new GroupDao.Membership(42, 42), new GroupDao.Membership(50, 50));
+        var caption = new GroupMessage(43, 4, 9, "caption", "入群前字幕", "CAPTION", LocalDateTime.now());
+        when(groups.history(4, 42, null, 30)).thenReturn(List.of(caption));
+        when(generator.summarize(List.of(caption))).thenReturn("敏感摘要");
+
+        assertThrows(ChatException.class, () -> service.generate("Bearer member", 4));
+        verify(summaries, never()).insert(any());
+        verify(generator).summarize(List.of(caption));
+    }
+
+    @Test
+    void revokedBetweenMembershipCheckAndInsertCannotSaveSummary() {
+        when(access.requireUser("Bearer member")).thenReturn(23L);
+        when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
+        var caption = new GroupMessage(43, 4, 9, "caption", "字幕", "CAPTION", LocalDateTime.now());
+        when(groups.history(4, 42, null, 30)).thenReturn(List.of(caption));
+        when(generator.summarize(List.of(caption))).thenReturn("摘要");
+        // The guarded INSERT returns 0 if membership changed after the Java check.
+        when(summaries.insert(any())).thenReturn(0);
+
+        ChatException error = assertThrows(ChatException.class, () -> service.generate("Bearer member", 4));
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, error.status());
+        verify(summaries, never()).visibleById(anyLong(), anyLong(), anyLong());
     }
 }

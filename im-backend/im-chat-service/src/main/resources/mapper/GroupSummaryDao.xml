@@ -17,7 +17,10 @@
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO im_group_summary
             (group_id, requester_id, first_message_id, last_message_id, content)
-        VALUES (#{groupId}, #{requesterId}, #{firstMessageId}, #{lastMessageId}, #{content})
+        SELECT #{groupId}, #{requesterId}, #{firstMessageId}, #{lastMessageId}, #{content}
+        FROM im_group_member
+        WHERE group_id = #{groupId} AND user_id = #{requesterId}
+          AND joined_after_id &lt; #{firstMessageId}
     </insert>
     <select id="visibleById" resultMap="summary">
         SELECT s.id, s.group_id, s.requester_id, s.first_message_id, s.last_message_id,
