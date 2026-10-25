@@ -32,6 +32,10 @@ public interface GroupDao {
     int addMember(@Param("groupId") long groupId, @Param("userId") long userId,
                   @Param("cursor") long cursor);
     int removeMember(@Param("groupId") long groupId, @Param("userId") long userId);
+    int transferOwner(@Param("groupId") long groupId, @Param("ownerId") long ownerId);
+    int deleteMembers(@Param("groupId") long groupId);
+    int deleteMessages(@Param("groupId") long groupId);
+    int deleteGroup(@Param("groupId") long groupId);
     Long latestId(@Param("groupId") long groupId);
     int insertMessage(@Param("groupId") long groupId, @Param("senderId") long senderId,
                       @Param("clientMsgId") String clientMsgId, @Param("body") String body,

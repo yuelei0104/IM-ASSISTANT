@@ -4,6 +4,7 @@ import com.yuelei.imchat.model.GroupChat;
 import com.yuelei.imchat.model.GroupMessage;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.Pattern;
 
@@ -13,6 +14,7 @@ public final class GroupDtos {
     private GroupDtos() { }
     public record Create(@NotBlank @Size(max = 30) String name, @NotNull @Size(max = 20) List<Long> friendIds) { }
     public record Invite(@NotNull @Size(min = 1, max = 20) List<Long> friendIds) { }
+    public record TransferOwner(@NotNull @Positive Long memberId) { }
     public record Groups(List<GroupChat> items, Long nextBeforeId) { }
     public record Page(List<GroupMessage> messages, Long nextBeforeId) { }
     public record SyncPage(List<GroupMessage> messages, Long nextAfterId) { }

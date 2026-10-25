@@ -38,4 +38,5 @@ public interface GroupSummaryDao {
                              @Param("userId") long userId);
     List<GroupSummary> visibleList(@Param("groupId") long groupId,
                                    @Param("userId") long userId, @Param("limit") int limit);
+    int deleteForGroup(@Param("groupId") long groupId);
 }

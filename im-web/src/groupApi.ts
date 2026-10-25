@@ -62,6 +62,10 @@ export const leaveGroup = (id: number) =>
   request<void>(`/${id}/members/me`, undefined, "DELETE");
 export const removeGroupMember = (id: number, memberId: number) =>
   request<void>(`/${id}/members/${memberId}`, undefined, "DELETE");
+export const transferGroupOwner = (id: number, memberId: number) =>
+  request<GroupChat>(`/${id}/owner`, { memberId });
+export const dissolveGroup = (id: number) =>
+  request<void>(`/${id}`, undefined, "DELETE");
 export const loadGroupMessages = (id: number, beforeId?: number, limit = 50) =>
   request<GroupPage>(`/${id}/messages?limit=${limit}${beforeId ? `&beforeId=${beforeId}` : ""}`);
 export const syncGroupMessages = (id: number, afterId: number, limit = 50) =>

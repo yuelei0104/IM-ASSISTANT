@@ -1,6 +1,7 @@
 package com.yuelei.imchat;
 
 import com.yuelei.imchat.dao.GroupDao;
+import com.yuelei.imchat.dao.GroupSummaryDao;
 import com.yuelei.imchat.dao.NoticeDao;
 import com.yuelei.imchat.dto.GroupDtos;
 import com.yuelei.imchat.exception.ChatException;
@@ -11,6 +12,7 @@ import com.yuelei.imchat.service.MentionEvent;
 import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -24,8 +26,60 @@ class GroupServiceTest {
     private final UserAccessClient access = mock(UserAccessClient.class);
     private final ApplicationEventPublisher events = mock(ApplicationEventPublisher.class);
     private final NoticeDao notices = mock(NoticeDao.class);
-    private final GroupService service = new GroupService(dao, access, events, notices);
+    private final GroupSummaryDao summaries = mock(GroupSummaryDao.class);
+    private final GroupService service = new GroupService(dao, access, events, notices, summaries);
     private static final String ID = "e9873e73-1326-4329-a4c0-936912a48e37";
+
+    @Test
+    void ownerTransferRequiresCurrentMemberAndAllowsOriginalOwnerToLeave() {
+        when(access.requireUser("Bearer owner")).thenReturn(9L);
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0),
+                new GroupDao.GroupRow(4, "讨论", 9, 0),
+                new GroupDao.GroupRow(4, "讨论", 9, 0),
+                new GroupDao.GroupRow(4, "讨论", 10, 0),
+                new GroupDao.GroupRow(4, "讨论", 10, 0));
+        when(dao.memberIds(4)).thenReturn(List.of(9L, 10L));
+        assertEquals(HttpStatus.BAD_REQUEST, assertThrows(ChatException.class,
+                () -> service.transferOwner("Bearer owner", 4, 9)).status());
+        assertEquals(HttpStatus.BAD_REQUEST, assertThrows(ChatException.class,
+                () -> service.transferOwner("Bearer owner", 4, 11)).status());
+        verify(dao, never()).transferOwner(anyLong(), anyLong());
+
+        when(dao.membership(4, 10)).thenReturn(new GroupDao.Membership(0, 0));
+        when(dao.transferOwner(4, 10)).thenReturn(1);
+        when(dao.group(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 10, 0));
+        assertEquals(10, service.transferOwner("Bearer owner", 4, 10).ownerId());
+        verify(events).publishEvent(new GroupEvent(4, 0, List.of(9L, 10L)));
+        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ChatException.class,
+                () -> service.transferOwner("Bearer owner", 4, 10)).status());
+
+        when(dao.removeMember(4, 9)).thenReturn(1);
+        when(dao.memberIds(4)).thenReturn(List.of(10L));
+        service.leave("Bearer owner", 4);
+        verify(dao).removeMember(4, 9);
+    }
+
+    @Test
+    void dissolveDeletesDependentRowsInOrderAndNotifiesOnlyAfterSuccess() {
+        when(access.requireUser("Bearer owner")).thenReturn(9L);
+        when(access.requireUser("Bearer member")).thenReturn(10L);
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ChatException.class,
+                () -> service.dissolve("Bearer member", 4)).status());
+        verifyNoInteractions(notices, summaries);
+        when(dao.memberIds(4)).thenReturn(List.of(9L, 10L));
+        when(dao.deleteGroup(4)).thenReturn(1);
+        service.dissolve("Bearer owner", 4);
+        var ordered = inOrder(notices, summaries, dao, events);
+        ordered.verify(dao, times(2)).lockGroup(4);
+        ordered.verify(dao).memberIds(4);
+        ordered.verify(notices).deleteForGroup(4);
+        ordered.verify(summaries).deleteForGroup(4);
+        ordered.verify(dao).deleteMessages(4);
+        ordered.verify(dao).deleteMembers(4);
+        ordered.verify(dao).deleteGroup(4);
+        ordered.verify(events).publishEvent(new GroupEvent(4, 0, List.of(9L, 10L)));
+    }
 
     @Test
     void leavingOrRemovalRevokesMembershipAndNotifiesFormerMember() {
@@ -65,6 +119,7 @@ class GroupServiceTest {
         verify(access, never()).requireFriend(any(), anyLong());
 
         when(access.requireUser("Bearer t")).thenReturn(9L);
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
         when(dao.memberIds(4)).thenReturn(List.of(9L, 10L));
         when(access.requireFriend("Bearer t", 10L)).thenReturn(9L);
         assertThrows(ChatException.class, () ->
@@ -73,9 +128,21 @@ class GroupServiceTest {
     }
 
     @Test
+    void invitationRechecksOwnerAfterTheGroupLock() {
+        when(access.requireUser("Bearer owner")).thenReturn(9L);
+        when(access.requireFriend("Bearer owner", 10L)).thenReturn(9L);
+        when(dao.group(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 11, 0));
+        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ChatException.class,
+                () -> service.invite("Bearer owner", 4, new GroupDtos.Invite(List.of(10L)))).status());
+        verify(dao, never()).addMember(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
     void newMembersStartAfterLatestMessageAndCannotReadEarlierHistory() {
         when(access.requireUser("Bearer t")).thenReturn(9L);
         when(dao.group(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
         when(dao.memberIds(4)).thenReturn(List.of(9L), List.of(9L, 10L));
         when(dao.latestId(4)).thenReturn(42L);
         when(access.requireFriend("Bearer t", 10L)).thenReturn(9L);

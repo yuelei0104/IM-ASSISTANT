@@ -38,4 +38,7 @@
         WHERE s.group_id = #{groupId} AND s.first_message_id &gt; gm.joined_after_id
         ORDER BY s.id DESC LIMIT #{limit}
     </select>
+    <delete id="deleteForGroup">
+        DELETE FROM im_group_summary WHERE group_id = #{groupId}
+    </delete>
 </mapper>
