@@ -19,6 +19,7 @@ export type Message = {
   status?: "local" | "failed";
   recalled?: boolean;
   createdAt?: string;
+  readReceipt?: "已发送" | "对方已读";
 };
 
 export type Conversation = {

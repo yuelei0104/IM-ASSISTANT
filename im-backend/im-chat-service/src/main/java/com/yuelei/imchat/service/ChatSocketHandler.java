@@ -83,6 +83,12 @@ public class ChatSocketHandler extends TextWebSocketHandler {
         push(recipientId, "MSG " + messageId + " " + senderId + " " + recipientId);
     }
 
+    public void notifyRead(long readerId, long peerId, long lastReadMessageId) {
+        String payload = "READ " + readerId + " " + lastReadMessageId;
+        push(peerId, payload);
+        push(readerId, payload); // Keep the reader's other devices in sync.
+    }
+
     public void notifyGroup(long groupId, long messageId, List<Long> recipients) {
         for (long userId : recipients)
             push(userId, "GROUP " + groupId + " " + messageId);

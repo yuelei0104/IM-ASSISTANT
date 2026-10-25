@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, recallDirectMessage, listDirectRecalls } from "../src/chatApi.ts";
+import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, getDirectReadReceipt, sendDirectMessage, recallDirectMessage, listDirectRecalls } from "../src/chatApi.ts";
 import { sessionKey } from "../src/authApi.ts";
 
 test("direct messages use the user's token, cursor and stable client id", async () => {
@@ -42,11 +42,12 @@ test("socket authenticates without URL token and refreshes after a notification"
   assert.deepEqual(opened.sent, ["AUTH alice-token"]);
   opened.onmessage({ data: "READY" });
   opened.onmessage({ data: "MSG 42 2 1" });
+  opened.onmessage({ data: "READ 2 42" });
   opened.onmessage({ data: "GROUP 7 42" });
   opened.onmessage({ data: "GROUP 7 0" });
   opened.onmessage({ data: "NOTICE" });
   assert.equal(connection.connected(), true);
-  assert.deepEqual(updates, [[undefined, undefined], ["direct", undefined],
+  assert.deepEqual(updates, [[undefined, undefined], ["direct", undefined], ["receipt", 2],
     ["group", undefined], ["group", 7], ["notice", undefined]]);
   connection.close();
   assert.equal(connection.connected(), false);
@@ -73,6 +74,17 @@ test("unread summary and read receipt use authenticated endpoints", async () => 
   await markDirectRead(2, 41);
   assert.equal(calls[1].url, "/api/chats/direct/2/read");
   assert.deepEqual(JSON.parse(calls[1].options.body), { lastReadMessageId: 41 });
+});
+
+test("sender fetches the peer's read cursor using its bearer session", async () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "alice-token" : null };
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/chats/direct/2/receipt");
+    assert.equal(options.headers.Authorization, "Bearer alice-token");
+    assert.equal(options.method, "GET");
+    return Response.json({ lastReadMessageId: 42 });
+  };
+  assert.deepEqual(await getDirectReadReceipt(2), { lastReadMessageId: 42 });
 });
 
 test("recall and recall feed use authenticated scoped requests", async () => {

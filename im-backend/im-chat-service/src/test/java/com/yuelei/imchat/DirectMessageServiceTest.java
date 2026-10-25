@@ -8,6 +8,7 @@ import com.yuelei.imchat.model.UnreadCount;
 import com.yuelei.imchat.model.MessageRecall;
 import org.springframework.http.HttpStatus;
 import com.yuelei.imchat.service.DirectMessageService;
+import com.yuelei.imchat.service.DirectReadEvent;
 import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
@@ -91,6 +92,28 @@ class DirectMessageServiceTest {
         assertThrows(ChatException.class, () -> service.markRead("Bearer t", 9L, 99L));
         assertThrows(ChatException.class, () -> service.markRead("Bearer t", 23L, 42L));
         verify(dao, never()).markRead(23L, 9L, 99L);
+    }
+
+    @Test
+    void readReceiptsArePairScopedAndOnlyAdvanceForReceivedMessages() {
+        when(access.requireUser("Bearer reader")).thenReturn(23L);
+        when(access.requireUser("Bearer sender")).thenReturn(9L);
+        when(dao.receivedCount(23, 9, 42)).thenReturn(1L);
+        when(dao.receivedCount(23, 9, 43)).thenReturn(1L);
+        when(dao.readCursor(23, 9)).thenReturn(null, null, 42L, 42L, 43L, 43L, 43L);
+
+        assertEquals(0, service.peerReadCursor("Bearer sender", 23));
+        service.markRead("Bearer reader", 9, 42);
+        service.markRead("Bearer reader", 9, 43);
+        service.markRead("Bearer reader", 9, 42);
+        assertEquals(43, service.peerReadCursor("Bearer sender", 23));
+        verify(dao, times(2)).markRead(eq(23L), eq(9L), anyLong());
+        verify(events).publishEvent(new DirectReadEvent(23, 9, 42));
+        verify(events).publishEvent(new DirectReadEvent(23, 9, 43));
+        assertEquals(HttpStatus.BAD_REQUEST, assertThrows(ChatException.class,
+                () -> service.peerReadCursor("Bearer sender", 9)).status());
+        assertEquals(HttpStatus.BAD_REQUEST, assertThrows(ChatException.class,
+                () -> service.markRead("Bearer reader", 9, 99)).status());
     }
     @Test
     void searchIsScopedToAuthenticatedPairAndEscapesLikeWildcards() {

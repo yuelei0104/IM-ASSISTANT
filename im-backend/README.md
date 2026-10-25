@@ -157,6 +157,24 @@ the caller's identity. Sending also verifies the pair is **currently** friends.
   been received from that friend; the stored read cursor only moves forward.
   Chat Flyway V2 adds the `im_direct_read` table and recipient lookup index.
 
+The sender can query `GET /api/chats/direct/{peerId}/receipt` for
+`{ "lastReadMessageId": 123 }`. This is the peer's durable read cursor for
+messages received from this sender. It starts at 0, never moves backward and
+only advances when the peer marks a message actually received in this pair.
+An advancement publishes an ID-only `READ` event to both authenticated users'
+WebSocket sessions; reconnect and periodic refresh query MySQL again. The web
+client shows **已发送** until the peer's cursor reaches that direct message, then
+**对方已读**. It does not claim delivery to the peer's device and does not apply
+to group messages or recalled messages. No database migration is required.
+
+To check locally after restarting the chat service, with user-service in its
+dev profile and MySQL/Redis running:
+
+```powershell
+Set-Location D:\im-assistant\im-backend
+python .\tools\direct_read_receipt_probe.py
+```
+
 ### Message recall
 
 Chat Flyway V10 adds direct and group recall timestamps and change feeds.

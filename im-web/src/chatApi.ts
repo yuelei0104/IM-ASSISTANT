@@ -12,6 +12,7 @@ export type DirectMessage = {
 export type MessagePage = { messages: DirectMessage[]; nextBeforeId: number | null };
 export type DirectSyncPage = { messages: DirectMessage[]; nextAfterId: number | null };
 export type UnreadCount = { peerId: number; unreadCount: number };
+export type ReadReceipt = { lastReadMessageId: number };
 export type MessageRecall = { id: number; messageId: number; recalledAt: string };
 export type RecallPage = { items: MessageRecall[]; nextAfterId: number | null };
 
@@ -78,7 +79,11 @@ export function markDirectRead(peerId: number, lastReadMessageId: number) {
   return request<void>(`/${peerId}/read`, { lastReadMessageId });
 }
 
-export function connectChatSocket(onUpdate: (kind?: "direct" | "group" | "notice", membershipGroupId?: number) => void) {
+export function getDirectReadReceipt(peerId: number) {
+  return request<ReadReceipt>(`/${peerId}/receipt`);
+}
+
+export function connectChatSocket(onUpdate: (kind?: "direct" | "group" | "notice" | "receipt", subjectId?: number) => void) {
   let socket: WebSocket | null = null;
   let authenticated = false;
   let stopped = false;
@@ -109,6 +114,8 @@ export function connectChatSocket(onUpdate: (kind?: "direct" | "group" | "notice
         onUpdate(); // Fetch after reconnect to fill any gap in Pub/Sub delivery.
       } else if (/^MSG \d+ \d+ \d+$/.test(event.data)) {
         onUpdate("direct");
+      } else if (/^READ [1-9]\d* [1-9]\d*$/.test(event.data)) {
+        onUpdate("receipt", Number(event.data.split(" ")[1]));
       } else if (/^GROUP \d+ \d+$/.test(event.data)) {
         const [, rawGroupId, rawMessageId] = event.data.split(" ");
         onUpdate("group", rawMessageId === "0" ? Number(rawGroupId) : undefined);
