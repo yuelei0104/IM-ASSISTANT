@@ -102,6 +102,10 @@
         SELECT COUNT(*) FROM im_direct_message
         WHERE id = #{messageId} AND recipient_id = #{userId} AND sender_id = #{peerId}
     </select>
+    <select id="readCursor" resultType="long">
+        SELECT last_read_message_id FROM im_direct_read
+        WHERE user_id = #{userId} AND peer_id = #{peerId}
+    </select>
     <insert id="markRead">
         INSERT INTO im_direct_read (user_id, peer_id, last_read_message_id)
         VALUES (#{userId}, #{peerId}, #{messageId})

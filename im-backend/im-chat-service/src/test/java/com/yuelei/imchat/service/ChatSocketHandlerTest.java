@@ -50,4 +50,34 @@ class ChatSocketHandlerTest {
         verify(session).close(CloseStatus.POLICY_VIOLATION);
         verifyNoInteractions(access);
     }
+
+    @Test
+    void readReceiptsOnlyReachAuthenticatedPairDevices() throws Exception {
+        var reader = mock(WebSocketSession.class);
+        var sender = mock(WebSocketSession.class);
+        var outsider = mock(WebSocketSession.class);
+        when(reader.getId()).thenReturn("reader");
+        when(sender.getId()).thenReturn("sender");
+        when(outsider.getId()).thenReturn("outsider");
+        when(reader.isOpen()).thenReturn(true);
+        when(sender.isOpen()).thenReturn(true);
+        when(outsider.isOpen()).thenReturn(true);
+        when(access.requireUser("Bearer reader")).thenReturn(23L);
+        when(access.requireUser("Bearer sender")).thenReturn(9L);
+        handler.afterConnectionEstablished(reader);
+        handler.afterConnectionEstablished(sender);
+        handler.afterConnectionEstablished(outsider);
+        handler.handleMessage(reader, new TextMessage("AUTH reader"));
+        handler.handleMessage(sender, new TextMessage("AUTH sender"));
+
+        handler.notifyRead(23, 9, 42);
+
+        var readerMessages = org.mockito.ArgumentCaptor.forClass(TextMessage.class);
+        var senderMessages = org.mockito.ArgumentCaptor.forClass(TextMessage.class);
+        verify(reader, times(2)).sendMessage(readerMessages.capture());
+        verify(sender, times(2)).sendMessage(senderMessages.capture());
+        assertEquals(List.of("READY", "READ 23 42"), readerMessages.getAllValues().stream().map(TextMessage::getPayload).toList());
+        assertEquals(List.of("READY", "READ 23 42"), senderMessages.getAllValues().stream().map(TextMessage::getPayload).toList());
+        verify(outsider, never()).sendMessage(any());
+    }
 }

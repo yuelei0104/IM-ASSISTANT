@@ -33,6 +33,7 @@ public interface MessageDao {
     List<UnreadCount> unreadCounts(@Param("userId") long userId);
     long receivedCount(@Param("userId") long userId, @Param("peerId") long peerId,
                        @Param("messageId") long messageId);
+    Long readCursor(@Param("userId") long userId, @Param("peerId") long peerId);
     int markRead(@Param("userId") long userId, @Param("peerId") long peerId,
                  @Param("messageId") long messageId);
 }

@@ -119,12 +119,26 @@ public class DirectMessageService {
         return messages.unreadCounts(access.requireUser(authorization));
     }
 
+    public long peerReadCursor(String authorization, long peerId) {
+        long userId = access.requireUser(authorization);
+        if (peerId <= 0 || peerId == userId)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "会话账号无效");
+        Long cursor = messages.readCursor(peerId, userId);
+        return cursor == null ? 0 : cursor;
+    }
+
+    @Transactional
     public void markRead(String authorization, long peerId, long lastReadMessageId) {
         long userId = access.requireUser(authorization);
         if (peerId <= 0 || peerId == userId || lastReadMessageId <= 0
                 || messages.receivedCount(userId, peerId, lastReadMessageId) != 1) {
             throw new ChatException(HttpStatus.BAD_REQUEST, "已读消息不属于当前会话");
         }
+        Long prior = messages.readCursor(userId, peerId);
+        if (prior != null && prior >= lastReadMessageId) return;
         messages.markRead(userId, peerId, lastReadMessageId);
+        // The cursor is monotonically increasing even when multiple devices read together.
+        Long saved = messages.readCursor(userId, peerId);
+        events.publishEvent(new DirectReadEvent(userId, peerId, saved == null ? lastReadMessageId : saved));
     }
 }

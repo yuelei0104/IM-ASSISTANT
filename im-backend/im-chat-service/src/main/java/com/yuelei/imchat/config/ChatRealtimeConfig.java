@@ -23,6 +23,9 @@ public class ChatRealtimeConfig {
                 if (parts.length == 2 && "N".equals(parts[0])) {
                     java.util.Arrays.stream(parts[1].split(",")).filter(part -> !part.isEmpty())
                             .mapToLong(Long::parseLong).forEach(sockets::notifyMention);
+                } else if (parts.length == 4 && "R".equals(parts[0])) {
+                    sockets.notifyRead(Long.parseLong(parts[1]), Long.parseLong(parts[2]),
+                            Long.parseLong(parts[3]));
                 } else if (parts.length == 4 && "G".equals(parts[0])) {
                     var recipients = java.util.Arrays.stream(parts[3].split(","))
                             .filter(part -> !part.isEmpty()).map(Long::parseLong).toList();

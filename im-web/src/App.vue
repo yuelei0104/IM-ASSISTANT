@@ -43,7 +43,7 @@ import {
   type ContactProfile,
   type ContactRequest,
 } from "./contactApi";
-import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, searchDirectMessages, recallDirectMessage, listDirectRecalls, type DirectMessage, type MessageRecall } from "./chatApi";
+import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, getDirectReadReceipt, sendDirectMessage, searchDirectMessages, recallDirectMessage, listDirectRecalls, type DirectMessage, type MessageRecall } from "./chatApi";
 import {
   createGroupChat, getGroup, getGroupMessage, inviteGroupMembers, leaveGroup, removeGroupMember,
   transferGroupOwner, dissolveGroup,
@@ -202,6 +202,7 @@ const requestsNextCursor = ref<number | null>(null);
 const knownPeers = ref<ContactProfile[]>([]);
 const loadingPeers = new Set<number>();
 const directMessages = ref<DirectMessage[]>([]);
+const peerLastReadId = ref(0);
 const directSyncCursor = ref<number | null>(null);
 const serverGroups = ref<GroupChat[]>([]);
 const groupsNextCursor = ref<number | null>(null);
@@ -313,6 +314,7 @@ watch(activeId, () => {
   showOlder.value = false;
   stopVoice();
   directMessages.value = [];
+  peerLastReadId.value = 0;
   groupMessages.value = [];
   directRecallCursor.value = 0;
   groupRecallCursor.value = 0;
@@ -386,6 +388,8 @@ function renderMessage(m: DirectMessage | GroupMessage): Message {
     kind: !m.recalledAt && "groupId" in m && m.kind === "CAPTION" ? "voice" : "text",
     recalled: !!m.recalledAt,
     createdAt: m.createdAt,
+    readReceipt: !("groupId" in m) && m.senderId === currentAccount.value?.id && !m.recalledAt
+      ? m.id <= peerLastReadId.value ? "对方已读" : "已发送" : undefined,
   };
 }
 const messages = computed<Message[]>(() => directPeer(activeId.value)
@@ -621,6 +625,15 @@ async function markVisibleRead(peerId: number) {
     readInFlight.delete(peerId);
   }
 }
+async function refreshPeerReadReceipt(peerId: number, accountId: number, sequence: number) {
+  try {
+    const receipt = await getDirectReadReceipt(peerId);
+    if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return;
+    peerLastReadId.value = Math.max(peerLastReadId.value, receipt.lastReadMessageId);
+  } catch {
+    // A later notification, reconnect or recovery poll can fetch the durable read cursor.
+  }
+}
 async function refreshDirectChat() {
   const peerId = directPeer(activeId.value);
   const accountId = currentAccount.value?.id;
@@ -647,6 +660,7 @@ async function refreshDirectChat() {
       });
     if (resumed === null) return;
     await syncDirectRecalls(peerId, accountId, sequence);
+    void refreshPeerReadReceipt(peerId, accountId, sequence);
     chatError.value = "";
     await nextTick();
     scrollBottom();
@@ -933,8 +947,14 @@ function mentionMember(id: string) {
   composer.value += `${composer.value && !/\s$/.test(composer.value) ? " " : ""}${token} `;
   mentionPickerOpen.value = false;
 }
-function onChatEvent(kind?: "direct" | "group" | "notice", membershipGroupId?: number) {
+function onChatEvent(kind?: "direct" | "group" | "notice" | "receipt", membershipGroupId?: number) {
   if (!currentAccount.value) return;
+  if (kind === "receipt") {
+    const peerId = directPeer(activeId.value);
+    if (peerId && peerId === membershipGroupId)
+      void refreshPeerReadReceipt(peerId, currentAccount.value.id, chatSeq);
+    return;
+  }
   if (!kind || kind === "direct") void refreshUnread();
   if (!kind || kind === "group") {
     const refreshed = refreshGroups();
@@ -1037,6 +1057,7 @@ function applyAccount(account: Account) {
   readInFlight.clear();
   knownPeers.value = loadKnownPeers(account);
   directMessages.value = [];
+  peerLastReadId.value = 0;
   groupMessages.value = [];
   directRecallCursor.value = 0;
   groupRecallCursor.value = 0;
@@ -1292,6 +1313,7 @@ async function signOut() {
   requestsNextCursor.value = null;
   knownPeers.value = [];
   directMessages.value = [];
+  peerLastReadId.value = 0;
   groupMessages.value = [];
   directRecallCursor.value = 0;
   groupRecallCursor.value = 0;
@@ -2772,6 +2794,7 @@ onBeforeUnmount(() => {
                     {{ m.translation }}
                   </div>
                   <div v-if="m.status" class="delivery">仅本地 · 未同步</div>
+                  <div v-else-if="m.readReceipt" class="delivery" aria-live="polite">{{ m.readReceipt }}</div>
                 </div>
               </div></template
             >
