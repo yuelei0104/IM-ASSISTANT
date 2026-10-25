@@ -12,18 +12,47 @@
             <arg column="body" javaType="java.lang.String"/>
             <arg column="created_at" javaType="java.time.LocalDateTime"/>
             <arg column="read_at" javaType="java.time.LocalDateTime"/>
+            <arg column="kind" javaType="java.lang.String"/>
+        </constructor>
+    </resultMap>
+    <resultMap id="keywordMatch" type="com.yuelei.imchat.dao.NoticeDao$KeywordMatch">
+        <constructor>
+            <arg column="user_id" javaType="_long"/>
+            <arg column="word" javaType="java.lang.String"/>
         </constructor>
     </resultMap>
     <insert id="add">
         INSERT INTO im_group_mention_notice (group_id, message_id, sender_id, recipient_id)
         VALUES (#{groupId}, #{messageId}, #{senderId}, #{recipientId})
     </insert>
+    <insert id="addKeyword">
+        INSERT INTO im_group_mention_notice (group_id, message_id, sender_id, recipient_id, kind)
+        VALUES (#{groupId}, #{messageId}, #{senderId}, #{recipientId}, 'KEYWORD')
+    </insert>
     <select id="recipients" resultType="long">
+        SELECT recipient_id FROM im_group_mention_notice
+        WHERE message_id = #{messageId} AND kind = 'MENTION' ORDER BY recipient_id
+    </select>
+    <select id="noticeRecipients" resultType="long">
         SELECT recipient_id FROM im_group_mention_notice WHERE message_id = #{messageId} ORDER BY recipient_id
     </select>
+    <select id="keywordsForGroup" resultMap="keywordMatch">
+        SELECT gm.user_id, k.word FROM im_group_member gm
+        JOIN im_group_keyword k ON k.user_id = gm.user_id
+        WHERE gm.group_id = #{groupId}
+    </select>
+    <select id="keywords" resultType="string">
+        SELECT word FROM im_group_keyword WHERE user_id = #{userId} ORDER BY word
+    </select>
+    <delete id="deleteKeywords">
+        DELETE FROM im_group_keyword WHERE user_id = #{userId}
+    </delete>
+    <insert id="addKeywordWord">
+        INSERT INTO im_group_keyword (user_id, word) VALUES (#{userId}, #{word})
+    </insert>
     <select id="list" resultMap="notice">
         SELECT n.id, n.group_id, n.message_id, n.sender_id, g.name AS group_name,
-               m.body, n.created_at, n.read_at
+               m.body, n.created_at, n.read_at, n.kind
         FROM im_group_mention_notice n
         JOIN im_chat_group g ON g.id = n.group_id
         JOIN im_group_message m ON m.id = n.message_id

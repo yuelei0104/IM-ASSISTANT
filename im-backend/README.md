@@ -257,6 +257,26 @@ existing message without duplicating notices. The notification inbox is
 `POST /api/chats/notices/{id}/read`, or all via
 `POST /api/chats/notices/read-all`. A `NOTICE` WebSocket event prompts the
 browser to reload the authenticated inbox; polling fills gaps after disconnect.
+
+Chat Flyway V11 adds personal group keyword subscriptions and a notice kind.
+`GET /api/chats/notices/keywords` lists the current account's words;
+`PUT /api/chats/notices/keywords` with `{ "words": ["会议", "截止"] }`
+atomically replaces them. Use up to five distinct words of 2–32 characters
+each; an empty list clears subscriptions. Only new group messages and reviewed
+captions can trigger these alerts. The group sender and outsiders never receive
+one. A message matching multiple words creates one `KEYWORD` notice, while an
+explicit @mention takes precedence and produces one `MENTION` notice. Both
+types share the authenticated paginated inbox and read actions. Group removal,
+re-invitation and recall use the existing visibility cursor and cleanup; saving
+words does not search or notify about earlier messages. No model is needed.
+
+After restarting chat-service on the dev profile, check with disposable local
+accounts:
+
+```powershell
+Set-Location D:\im-assistant\im-backend
+python .\tools\group_keyword_probe.py
+```
 Direct-chat discussion hints and tasks remain browser demos.
 
 Chat Flyway V9 adds a `kind` to group messages (`TEXT` by default, `CAPTION`

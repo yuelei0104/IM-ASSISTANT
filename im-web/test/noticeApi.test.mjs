@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sessionKey } from "../src/authApi.ts";
-import { listMentionNotices, markMentionRead, markAllMentionsRead } from "../src/noticeApi.ts";
+import { listMentionNotices, markMentionRead, markAllMentionsRead, getAlertKeywords, saveAlertKeywords } from "../src/noticeApi.ts";
 import { sendGroupMessage, getGroupMessage } from "../src/groupApi.ts";
 
 test("mentions and notifications use authenticated requests with a message cursor", async () => {
@@ -25,4 +25,20 @@ test("mentions and notifications use authenticated requests with a message curso
   assert.equal(calls[3].url, "/api/chats/notices/read-all");
   await getGroupMessage(4, 50);
   assert.equal(calls[4].url, "/api/chats/groups/4/messages/50");
+});
+
+test("keyword settings stay scoped to the authenticated user and use PUT for replacement", async () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "member-token" : null };
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    assert.equal(options.headers.Authorization, "Bearer member-token");
+    return Response.json({ words: ["会议"] });
+  };
+  assert.deepEqual(await getAlertKeywords(), { words: ["会议"] });
+  assert.deepEqual(await saveAlertKeywords(["会议"]), { words: ["会议"] });
+  assert.equal(calls[0].url, "/api/chats/notices/keywords");
+  assert.equal(calls[0].options.method, "GET");
+  assert.equal(calls[1].options.method, "PUT");
+  assert.deepEqual(JSON.parse(calls[1].options.body), { words: ["会议"] });
 });
