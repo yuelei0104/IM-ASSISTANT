@@ -28,6 +28,35 @@ class GroupServiceTest {
     private static final String ID = "e9873e73-1326-4329-a4c0-936912a48e37";
 
     @Test
+    void leavingOrRemovalRevokesMembershipAndNotifiesFormerMember() {
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+        when(dao.removeMember(4, 10)).thenReturn(1);
+        when(dao.memberIds(4)).thenReturn(List.of(9L, 11L));
+
+        when(access.requireUser("Bearer member")).thenReturn(10L);
+        service.leave("Bearer member", 4);
+        verify(events).publishEvent(new GroupEvent(4, 0, List.of(9L, 11L, 10L)));
+
+        when(access.requireUser("Bearer owner")).thenReturn(9L);
+        service.remove("Bearer owner", 4, 10);
+        verify(dao, times(2)).removeMember(4, 10);
+        verify(events, times(2)).publishEvent(new GroupEvent(4, 0, List.of(9L, 11L, 10L)));
+    }
+
+    @Test
+    void ownerCannotLeaveAndNonOwnerCannotRemoveOtherMembers() {
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+        when(access.requireUser("Bearer owner")).thenReturn(9L);
+        when(access.requireUser("Bearer member")).thenReturn(10L);
+        assertThrows(ChatException.class, () -> service.leave("Bearer owner", 4));
+        assertThrows(ChatException.class, () -> service.remove("Bearer member", 4, 11));
+        assertThrows(ChatException.class, () -> service.remove("Bearer owner", 4, 9));
+        when(dao.removeMember(4, 11)).thenReturn(0);
+        assertThrows(ChatException.class, () -> service.remove("Bearer owner", 4, 11));
+        verifyNoInteractions(events);
+    }
+
+    @Test
     void onlyOwnerCanInviteAndExistingMembersCannotBeInvitedAgain() {
         when(access.requireUser("Bearer t")).thenReturn(7L);
         when(dao.group(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));

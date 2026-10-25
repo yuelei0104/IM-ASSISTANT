@@ -71,7 +71,7 @@ export function markDirectRead(peerId: number, lastReadMessageId: number) {
   return request<void>(`/${peerId}/read`, { lastReadMessageId });
 }
 
-export function connectChatSocket(onUpdate: (kind?: "direct" | "group" | "notice") => void) {
+export function connectChatSocket(onUpdate: (kind?: "direct" | "group" | "notice", membershipGroupId?: number) => void) {
   let socket: WebSocket | null = null;
   let authenticated = false;
   let stopped = false;
@@ -103,7 +103,8 @@ export function connectChatSocket(onUpdate: (kind?: "direct" | "group" | "notice
       } else if (/^MSG \d+ \d+ \d+$/.test(event.data)) {
         onUpdate("direct");
       } else if (/^GROUP \d+ \d+$/.test(event.data)) {
-        onUpdate("group");
+        const [, rawGroupId, rawMessageId] = event.data.split(" ");
+        onUpdate("group", rawMessageId === "0" ? Number(rawGroupId) : undefined);
       } else if (event.data === "NOTICE") {
         onUpdate("notice");
       }

@@ -1574,6 +1574,8 @@ svg {
   margin-left: auto;
   color: #96acb1;
 }
+.member-remove { margin-left: auto; }
+.drawer-leave { margin-top: 14px; }
 .drawer-toggle {
   display: flex;
   justify-content: space-between;

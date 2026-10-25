@@ -186,6 +186,13 @@ removal, so either participant can still reopen their history on that browser.
 Group chats are persisted in MySQL (chat Flyway V4), with membership checks,
 50-member capacity, cursor-based history and unread counts. Inviting a new
 member sets their history cursor to the latest committed group message.
+Members can leave with `DELETE /api/chats/groups/{groupId}/members/me` and the
+owner can remove another member with `DELETE /api/chats/groups/{groupId}/members/{memberId}`.
+Both return HTTP 204, lock the group row against concurrent sends/invites, and
+notify the former member to clear cached group content. The owner currently
+cannot leave or be removed. A former member cannot load messages, summaries,
+or mention text. On re-invitation, the new join cursor hides messages and
+mentions from the earlier membership period; no group messages are deleted.
 The same forward recovery endpoint is available at
 `GET /api/chats/groups/{groupId}/messages/sync?afterId=123&limit=50`;
 it enforces membership and the member's join cursor. Flyway V6 creates a
@@ -227,12 +234,12 @@ same recent, membership-scoped messages as before. No session-token copying
 or Python probe is needed for this check.
 
 For a repeatable API-level privacy check without copying session tokens, run
-the probe from the preview repository root after starting both services with
-the `dev` profile. It creates three disposable accounts and two captions in
-the local database; no microphone or Ollama installation is needed:
+the probe from the repository root after starting both services with the
+`dev` profile. It creates three disposable accounts, two captions and one
+mention in the local database; no microphone or Ollama installation is needed:
 
 ```powershell
-Set-Location D:\im-assistant-preview
+Set-Location D:\im-assistant
 python .\im-backend\tools\group_privacy_probe.py
 ```
 

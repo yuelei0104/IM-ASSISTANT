@@ -30,13 +30,13 @@ export type GroupSummary = {
 export type GroupsPage = { items: GroupChat[]; nextBeforeId: number | null };
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
-async function request<T>(path: string, body?: object): Promise<T> {
+async function request<T>(path: string, body?: object, method?: "DELETE"): Promise<T> {
   const token = sessionToken();
   if (!token) throw new ApiError("请先登录", 401);
   let response: Response;
   try {
     response = await fetch(`${apiBase}/chats/groups${path}`, {
-      method: body ? "POST" : "GET",
+      method: method || (body ? "POST" : "GET"),
       headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
@@ -58,6 +58,10 @@ export const createGroupChat = (name: string, friendIds: number[]) =>
   request<GroupChat>("", { name, friendIds });
 export const inviteGroupMembers = (id: number, friendIds: number[]) =>
   request<GroupChat>(`/${id}/members`, { friendIds });
+export const leaveGroup = (id: number) =>
+  request<void>(`/${id}/members/me`, undefined, "DELETE");
+export const removeGroupMember = (id: number, memberId: number) =>
+  request<void>(`/${id}/members/${memberId}`, undefined, "DELETE");
 export const loadGroupMessages = (id: number, beforeId?: number, limit = 50) =>
   request<GroupPage>(`/${id}/messages?limit=${limit}${beforeId ? `&beforeId=${beforeId}` : ""}`);
 export const syncGroupMessages = (id: number, afterId: number, limit = 50) =>

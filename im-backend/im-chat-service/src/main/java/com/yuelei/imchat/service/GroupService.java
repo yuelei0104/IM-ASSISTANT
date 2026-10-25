@@ -90,6 +90,41 @@ public class GroupService {
     }
 
     @Transactional
+    public void leave(String authorization, long groupId) {
+        long userId = access.requireUser(authorization);
+        var group = lockedGroup(groupId);
+        if (group.ownerId() == userId)
+            throw new ChatException(HttpStatus.CONFLICT, "群主暂不能退出讨论室");
+        removeCurrentMember(groupId, userId);
+    }
+
+    @Transactional
+    public void remove(String authorization, long groupId, long memberId) {
+        long userId = access.requireUser(authorization);
+        var group = lockedGroup(groupId);
+        if (group.ownerId() != userId)
+            throw new ChatException(HttpStatus.FORBIDDEN, "只有群主可以移除成员");
+        if (memberId <= 0 || memberId == userId)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "不能移除群主");
+        removeCurrentMember(groupId, memberId);
+    }
+
+    private GroupDao.GroupRow lockedGroup(long groupId) {
+        if (groupId <= 0) throw new ChatException(HttpStatus.BAD_REQUEST, "讨论室编号无效");
+        var group = dao.lockGroup(groupId);
+        if (group == null) throw new ChatException(HttpStatus.NOT_FOUND, "讨论室不存在");
+        return group;
+    }
+
+    private void removeCurrentMember(long groupId, long memberId) {
+        if (dao.removeMember(groupId, memberId) != 1)
+            throw new ChatException(HttpStatus.CONFLICT, "成员已退出讨论室");
+        var recipients = new ArrayList<>(dao.memberIds(groupId));
+        recipients.add(memberId); // Let the removed member clear this group's cached content.
+        events.publishEvent(new GroupEvent(groupId, 0, List.copyOf(recipients)));
+    }
+
+    @Transactional
     public GroupMessage send(String authorization, long groupId, GroupDtos.SendGroup input) {
         long sender = access.requireUser(authorization);
         if (dao.lockGroup(groupId) == null) throw new ChatException(HttpStatus.NOT_FOUND, "讨论室不存在");
