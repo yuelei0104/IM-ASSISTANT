@@ -9,6 +9,7 @@ export type MentionNotice = {
   body: string;
   createdAt: string;
   readAt: string | null;
+  kind: "MENTION" | "KEYWORD";
 };
 export type NoticePage = {
   items: MentionNotice[];
@@ -17,13 +18,15 @@ export type NoticePage = {
 };
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
-async function request<T>(path: string, read = false): Promise<T> {
+async function request<T>(path: string, method: "GET" | "POST" | "PUT" = "GET", body?: object): Promise<T> {
   const token = sessionToken();
   if (!token) throw new ApiError("请先登录", 401);
   let response: Response;
   try {
     response = await fetch(`${apiBase}/chats/notices${path}`, {
-      method: read ? "POST" : "GET", headers: { Authorization: `Bearer ${token}` },
+      method,
+      headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
     });
   } catch {
     throw new ApiError("无法连接消息服务，请确认 8082 端口已启动", 0);
@@ -38,5 +41,8 @@ async function request<T>(path: string, read = false): Promise<T> {
 
 export const listMentionNotices = (beforeId?: number) =>
   request<NoticePage>(`?limit=50${beforeId ? `&beforeId=${beforeId}` : ""}`);
-export const markMentionRead = (id: number) => request<void>(`/${id}/read`, true);
-export const markAllMentionsRead = () => request<void>("/read-all", true);
+export const markMentionRead = (id: number) => request<void>(`/${id}/read`, "POST");
+export const markAllMentionsRead = () => request<void>("/read-all", "POST");
+export const getAlertKeywords = () => request<{ words: string[] }>("/keywords");
+export const saveAlertKeywords = (words: string[]) =>
+  request<{ words: string[] }>("/keywords", "PUT", { words });

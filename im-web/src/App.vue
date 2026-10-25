@@ -52,7 +52,7 @@ import {
   markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages, listGroupSummaries, generateGroupSummary,
   type GroupChat, type GroupMessage, type GroupSummary,
 } from "./groupApi";
-import { listMentionNotices, markAllMentionsRead, markMentionRead, type MentionNotice } from "./noticeApi";
+import { listMentionNotices, markAllMentionsRead, markMentionRead, getAlertKeywords, saveAlertKeywords, type MentionNotice } from "./noticeApi";
 import { listTasks, createTask, completeTask, deleteTask, type PersonalTask } from "./taskApi";
 import { syncForward } from "./incrementalSync";
 import { resumeCursor, savedCursor, saveCursor } from "./syncCursor";
@@ -228,6 +228,10 @@ const noticeNextBeforeId = ref<number | null>(null);
 const noticeUnreadCount = ref(0);
 const noticeError = ref("");
 let noticeSeq = 0;
+const keywordBusy = ref(false);
+const keywordError = ref("");
+const keywordSaved = ref(false);
+let keywordSeq = 0;
 const directUnread = ref<Record<number, number>>({});
 const lastMarkedRead = new Map<number, number>();
 const readInFlight = new Set<number>();
@@ -438,7 +442,7 @@ const focusCount = computed(
   () =>
     messages.value.filter(
       (m) =>
-        m.senderId !== selfId &&
+        m.senderId !== selfId && !m.recalled &&
         data.value.preferences.focusWords
           .split(/[,，]/)
           .some((w) => w.trim() && m.text.includes(w.trim())),
@@ -922,6 +926,42 @@ async function refreshNotices() {
     if (sequence === noticeSeq) noticeError.value = error instanceof Error ? error.message : "通知加载失败";
   }
 }
+async function loadFocusWords() {
+  const accountId = currentAccount.value?.id;
+  if (!accountId) return;
+  const sequence = ++keywordSeq;
+  keywordBusy.value = true;
+  keywordError.value = "";
+  try {
+    const saved = await getAlertKeywords();
+    if (sequence !== keywordSeq || currentAccount.value?.id !== accountId) return;
+    data.value.preferences.focusWords = saved.words.join("，");
+  } catch (error) {
+    if (sequence === keywordSeq) keywordError.value = error instanceof Error ? error.message : "关注词加载失败";
+  } finally {
+    if (sequence === keywordSeq) keywordBusy.value = false;
+  }
+}
+async function saveFocusWords() {
+  const accountId = currentAccount.value?.id;
+  if (!accountId || keywordBusy.value) return;
+  const words = data.value.preferences.focusWords.split(/[,，]/).map((word) => word.trim()).filter(Boolean);
+  const sequence = ++keywordSeq;
+  keywordBusy.value = true;
+  keywordError.value = "";
+  keywordSaved.value = false;
+  try {
+    const saved = await saveAlertKeywords(words);
+    if (sequence !== keywordSeq || currentAccount.value?.id !== accountId) return;
+    data.value.preferences.focusWords = saved.words.join("，");
+    keywordSaved.value = true;
+    notify("关注词已保存，后续群消息命中时会提醒你");
+  } catch (error) {
+    if (sequence === keywordSeq) keywordError.value = error instanceof Error ? error.message : "关注词保存失败";
+  } finally {
+    if (sequence === keywordSeq) keywordBusy.value = false;
+  }
+}
 async function loadOlderNotices() {
   const cursor = noticeNextBeforeId.value;
   const accountId = currentAccount.value?.id;
@@ -1088,10 +1128,15 @@ function applyAccount(account: Account) {
   noticeUnreadCount.value = 0;
   noticeError.value = "";
   noticeSeq++;
+  keywordSeq++;
+  keywordBusy.value = false;
+  keywordError.value = "";
+  keywordSaved.value = false;
   mentionSelections.value = {};
   groupsSeq++;
   activeId.value = "";
   data.value = load(account);
+  data.value.preferences.focusWords = "";
   data.value.displayName = account.name;
   data.value.handle = account.handle;
   data.value.people[0]!.name = account.name;
@@ -1103,6 +1148,7 @@ function applyAccount(account: Account) {
   void refreshUnread();
   void refreshGroups();
   void refreshNotices();
+  void loadFocusWords();
   void refreshTasks();
   chatSocket = connectChatSocket(onChatEvent);
   nextTick(scrollBottom);
@@ -1344,6 +1390,10 @@ async function signOut() {
   noticeUnreadCount.value = 0;
   noticeError.value = "";
   noticeSeq++;
+  keywordSeq++;
+  keywordBusy.value = false;
+  keywordError.value = "";
+  keywordSaved.value = false;
   mentionSelections.value = {};
   groupsSeq++;
   contactRequests.value = [];
@@ -3217,7 +3267,7 @@ onBeforeUnmount(() => {
       <div v-if="page === 'notices'" class="page-content">
         <div class="content-card">
           <div class="card-heading">
-            <h2>点名提醒</h2>
+            <h2>消息提醒</h2>
             <button
               class="text-button"
               :disabled="!unread"
@@ -3236,9 +3286,9 @@ onBeforeUnmount(() => {
             @click="openNotice(n)"
           >
             <span class="notice-icon"
-              ><AppIcon name="at" :size="19" /></span
+              ><AppIcon :name="n.kind === 'KEYWORD' ? 'bell' : 'at'" :size="19" /></span
             ><span class="notice-body"
-              ><strong>{{ person(`user-${n.senderId}`).name }} 在「{{ n.groupName }}」中提到了你</strong
+              ><strong>{{ person(`user-${n.senderId}`).name }} 在「{{ n.groupName }}」中{{ n.kind === 'KEYWORD' ? '发了关注词消息' : '提到了你' }}</strong
               ><span>{{ n.body.slice(0, 100) }}</span></span
             ><small>{{ new Date(n.createdAt).toLocaleString("zh-CN") }}</small
             ><span v-if="!n.readAt" class="notice-dot" />
@@ -3438,14 +3488,21 @@ onBeforeUnmount(() => {
           <div class="setting-row">
             <div>
               <strong>关注词</strong>
-              <p>逗号分隔，助手可提示相关消息</p>
+              <p>最多 5 个，每个 2–32 字；群消息和字幕命中后会提醒你</p>
             </div>
             <input
               v-model="data.preferences.focusWords"
               class="setting-input"
               aria-label="关注词"
+              :disabled="keywordBusy"
+              @input="keywordSaved = false"
             />
+            <button class="soft-button" type="button" :disabled="keywordBusy" @click="saveFocusWords">
+              {{ keywordBusy ? "处理中…" : "保存关注词" }}
+            </button>
           </div>
+          <p v-if="keywordError" class="error-text" role="alert">{{ keywordError }}</p>
+          <p v-if="keywordSaved" class="success-text" role="status">关注词已保存</p>
           <div class="setting-row">
             <div>
               <strong>免打扰时段</strong>

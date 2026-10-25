@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class GroupService {
@@ -187,9 +188,20 @@ public class GroupService {
         if (saved == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "消息保存失败");
         if (saved.groupId() != groupId || !saved.body().equals(body) || !saved.kind().equals(kind))
             throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于另一条消息");
+        var alertRecipients = new HashSet<Long>(targets);
         for (long recipient : targets) notices.add(groupId, saved.id(), sender, recipient);
+        String matchingBody = body.toLowerCase(Locale.ROOT);
+        // One notice per user and message. An explicit @mention takes precedence.
+        for (var subscription : notices.keywordsForGroup(groupId)) {
+            long recipient = subscription.userId();
+            if (recipient != sender && !alertRecipients.contains(recipient)
+                    && matchingBody.contains(subscription.word())) {
+                notices.addKeyword(groupId, saved.id(), sender, recipient);
+                alertRecipients.add(recipient);
+            }
+        }
         events.publishEvent(new GroupEvent(groupId, saved.id(), dao.memberIds(groupId)));
-        if (!targets.isEmpty()) events.publishEvent(new MentionEvent(List.copyOf(targets)));
+        if (!alertRecipients.isEmpty()) events.publishEvent(new MentionEvent(alertRecipients.stream().sorted().toList()));
         return saved;
     }
 
@@ -213,11 +225,11 @@ public class GroupService {
         if (dao.recall(groupId, messageId, userId) != 1)
             throw new ChatException(HttpStatus.CONFLICT, "只能在发送后两分钟内撤回");
         dao.addRecall(groupId, messageId);
-        var mentioned = notices.recipients(messageId);
+        var recipients = notices.noticeRecipients(messageId);
         notices.deleteForMessage(messageId);
         summaries.deleteContaining(groupId, messageId);
         events.publishEvent(new GroupEvent(groupId, messageId, dao.memberIds(groupId)));
-        if (!mentioned.isEmpty()) events.publishEvent(new MentionEvent(mentioned));
+        if (!recipients.isEmpty()) events.publishEvent(new MentionEvent(recipients));
     }
 
     public GroupDtos.RecallPage recalls(String authorization, long groupId, long afterId, int limit) {

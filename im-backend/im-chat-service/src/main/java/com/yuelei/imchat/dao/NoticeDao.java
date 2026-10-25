@@ -8,9 +8,17 @@ import java.util.List;
 
 @Mapper
 public interface NoticeDao {
+    record KeywordMatch(long userId, String word) { }
     int add(@Param("groupId") long groupId, @Param("messageId") long messageId,
             @Param("senderId") long senderId, @Param("recipientId") long recipientId);
+    int addKeyword(@Param("groupId") long groupId, @Param("messageId") long messageId,
+                   @Param("senderId") long senderId, @Param("recipientId") long recipientId);
     List<Long> recipients(@Param("messageId") long messageId);
+    List<Long> noticeRecipients(@Param("messageId") long messageId);
+    List<KeywordMatch> keywordsForGroup(@Param("groupId") long groupId);
+    List<String> keywords(@Param("userId") long userId);
+    int deleteKeywords(@Param("userId") long userId);
+    int addKeywordWord(@Param("userId") long userId, @Param("word") String word);
     List<MentionNotice> list(@Param("userId") long userId,
                              @Param("beforeId") Long beforeId, @Param("limit") int limit);
     long unread(@Param("userId") long userId);

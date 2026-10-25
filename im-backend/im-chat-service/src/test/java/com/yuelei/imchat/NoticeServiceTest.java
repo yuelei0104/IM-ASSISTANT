@@ -3,6 +3,7 @@ package com.yuelei.imchat;
 import com.yuelei.imchat.dao.NoticeDao;
 import com.yuelei.imchat.service.NoticeService;
 import com.yuelei.imchat.service.UserAccessClient;
+import com.yuelei.imchat.exception.ChatException;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -27,5 +28,23 @@ class NoticeServiceTest {
         verify(dao).markAllRead(10);
         verify(dao).list(10, null, 2);
         verify(dao).unread(10);
+    }
+
+    @Test
+    void keywordsArePrivateNormalizedAndReplacedAtomically() {
+        when(access.requireUser("Bearer t")).thenReturn(10L);
+        when(dao.keywords(10)).thenReturn(List.of("会议", "deadline"));
+        assertEquals(List.of("会议", "deadline"), service.keywords("Bearer t").words());
+        assertEquals(List.of("会议", "deadline"),
+                service.replaceKeywords("Bearer t", List.of(" 会议 ", "DEADLINE")).words());
+        var ordered = inOrder(dao);
+        ordered.verify(dao).deleteKeywords(10);
+        ordered.verify(dao).addKeywordWord(10, "会议");
+        ordered.verify(dao).addKeywordWord(10, "deadline");
+        assertThrows(ChatException.class,
+                () -> service.replaceKeywords("Bearer t", List.of("会议", " 会议 ")));
+        assertThrows(ChatException.class,
+                () -> service.replaceKeywords("Bearer t", List.of("x")));
+        verify(dao, times(1)).deleteKeywords(10);
     }
 }

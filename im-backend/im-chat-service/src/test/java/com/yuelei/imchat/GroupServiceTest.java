@@ -11,6 +11,7 @@ import com.yuelei.imchat.service.GroupService;
 import com.yuelei.imchat.service.MentionEvent;
 import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 
@@ -29,6 +30,11 @@ class GroupServiceTest {
     private final GroupSummaryDao summaries = mock(GroupSummaryDao.class);
     private final GroupService service = new GroupService(dao, access, events, notices, summaries);
     private static final String ID = "e9873e73-1326-4329-a4c0-936912a48e37";
+
+    @BeforeEach
+    void noSubscribedWordsByDefault() {
+        when(notices.keywordsForGroup(anyLong())).thenReturn(List.of());
+    }
 
     @Test
     void ownerTransferRequiresCurrentMemberAndAllowsOriginalOwnerToLeave() {
@@ -212,6 +218,33 @@ class GroupServiceTest {
     }
 
     @Test
+    void keywordAlertsSkipSenderAndDeduplicateMentionsAndMultipleMatchingWords() {
+        when(access.requireUser("Bearer sender")).thenReturn(9L);
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+        when(dao.membership(4, 9)).thenReturn(new GroupDao.Membership(0, 0));
+        when(dao.memberIds(4)).thenReturn(List.of(9L, 10L, 11L, 12L));
+        when(notices.keywordsForGroup(4)).thenReturn(List.of(
+                new NoticeDao.KeywordMatch(9, "会议"),
+                new NoticeDao.KeywordMatch(10, "会议"),
+                new NoticeDao.KeywordMatch(10, "总结"),
+                new NoticeDao.KeywordMatch(11, "无关"),
+                new NoticeDao.KeywordMatch(12, "会议")));
+        var saved = new GroupMessage(51, 4, 9, ID, "会议总结", LocalDateTime.now());
+        when(dao.byClientId(9, ID)).thenReturn(null, saved, saved);
+        var input = new GroupDtos.SendGroup(ID, "会议总结", List.of(12L));
+        assertEquals(saved, service.send("Bearer sender", 4, input));
+        verify(notices).add(4, 51, 9, 12);
+        verify(notices).addKeyword(4, 51, 9, 10);
+        verify(notices, never()).addKeyword(eq(4L), eq(51L), eq(9L), eq(9L));
+        verify(notices, never()).addKeyword(eq(4L), eq(51L), eq(9L), eq(12L));
+        verify(events).publishEvent(new MentionEvent(List.of(10L, 12L)));
+
+        when(notices.recipients(51)).thenReturn(List.of(12L));
+        assertEquals(saved, service.send("Bearer sender", 4, input));
+        verify(notices, times(1)).addKeyword(4, 51, 9, 10);
+    }
+
+    @Test
     void captionsRequireMembershipAndCannotReuseTextMessageId() {
         when(access.requireUser("Bearer t")).thenReturn(9L);
         when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
@@ -244,7 +277,7 @@ class GroupServiceTest {
                 () -> service.recall("Bearer member", 4, 51)).status());
         when(dao.recall(4, 51, 9)).thenReturn(1);
         when(dao.memberIds(4)).thenReturn(List.of(9L, 10L));
-        when(notices.recipients(51)).thenReturn(List.of(10L));
+        when(notices.noticeRecipients(51)).thenReturn(List.of(10L));
         service.recall("Bearer owner", 4, 51);
         verify(dao).addRecall(4, 51);
         verify(notices).deleteForMessage(51);
