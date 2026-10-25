@@ -73,6 +73,20 @@ public class GroupController {
         return groups.send(auth, groupId, request);
     }
 
+    @DeleteMapping("/{groupId}/messages/{messageId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void recall(@RequestHeader(value = "Authorization", required = false) String auth,
+                       @PathVariable long groupId, @PathVariable long messageId) {
+        groups.recall(auth, groupId, messageId);
+    }
+
+    @GetMapping("/{groupId}/messages/recalls")
+    public GroupDtos.RecallPage recalls(@RequestHeader(value = "Authorization", required = false) String auth,
+                                        @PathVariable long groupId, @RequestParam(defaultValue = "0") long afterId,
+                                        @RequestParam(defaultValue = "50") int limit) {
+        return groups.recalls(auth, groupId, afterId, limit);
+    }
+
     @GetMapping("/{groupId}/messages")
     public GroupDtos.Page history(@RequestHeader(value = "Authorization", required = false) String auth,
                                   @PathVariable long groupId,

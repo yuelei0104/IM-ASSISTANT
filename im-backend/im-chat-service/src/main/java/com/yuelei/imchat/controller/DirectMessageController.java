@@ -7,6 +7,7 @@ import com.yuelei.imchat.model.DirectMessage;
 import com.yuelei.imchat.service.DirectMessageService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.HttpStatus;
 
 @RestController
 @RequestMapping("/api/chats/direct/{friendId}/messages")
@@ -19,6 +20,21 @@ public class DirectMessageController {
     public DirectMessage send(@RequestHeader(value = "Authorization", required = false) String authorization,
                               @PathVariable long friendId, @Valid @RequestBody Send input) {
         return service.send(authorization, friendId, input);
+    }
+
+    @DeleteMapping("/{messageId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void recall(@RequestHeader(value = "Authorization", required = false) String authorization,
+                       @PathVariable long friendId, @PathVariable long messageId) {
+        service.recall(authorization, friendId, messageId);
+    }
+
+    @GetMapping("/recalls")
+    public com.yuelei.imchat.dto.MessageDtos.RecallPage recalls(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable long friendId, @RequestParam(defaultValue = "0") long afterId,
+            @RequestParam(defaultValue = "50") int limit) {
+        return service.recalls(authorization, friendId, afterId, limit);
     }
 
     @GetMapping

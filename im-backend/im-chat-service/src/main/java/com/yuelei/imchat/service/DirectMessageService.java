@@ -6,6 +6,7 @@ import com.yuelei.imchat.dto.MessageDtos.Send;
 import com.yuelei.imchat.dto.MessageDtos.SyncPage;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.DirectMessage;
+import com.yuelei.imchat.model.MessageRecall;
 import com.yuelei.imchat.model.UnreadCount;
 import org.springframework.http.HttpStatus;
 import org.springframework.context.ApplicationEventPublisher;
@@ -42,11 +43,41 @@ public class DirectMessageService {
                 senderId, friendId, input.clientMsgId(), body);
         DirectMessage saved = messages.byClientId(senderId, input.clientMsgId());
         if (saved == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "消息保存失败");
-        if (saved.recipientId() != friendId || !saved.body().equals(body))
+        if (saved.recipientId() != friendId || saved.recalledAt() != null || !saved.body().equals(body))
             throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于另一条消息");
         messages.trackInbox(friendId, senderId);
         events.publishEvent(saved);
         return saved;
+    }
+
+    @Transactional
+    public void recall(String authorization, long friendId, long messageId) {
+        long senderId = access.requireUser(authorization);
+        if (friendId <= 0 || friendId == senderId || messageId <= 0)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "消息编号无效");
+        DirectMessage message = messages.byId(messageId);
+        if (message == null || message.senderId() != senderId || message.recipientId() != friendId)
+            throw new ChatException(HttpStatus.NOT_FOUND, "只能撤回自己发送的消息");
+        if (message.recalledAt() != null) return;
+        if (messages.recall(messageId, senderId) != 1) {
+            // A concurrent recall may have committed while this request waited on the row lock.
+            if (messages.byId(messageId).recalledAt() != null) return;
+            throw new ChatException(HttpStatus.CONFLICT, "只能在发送后两分钟内撤回");
+        }
+        messages.addRecall(messageId, Math.min(senderId, friendId), Math.max(senderId, friendId));
+        events.publishEvent(messages.byId(messageId));
+    }
+
+    public com.yuelei.imchat.dto.MessageDtos.RecallPage recalls(String authorization, long friendId,
+                                                                  long afterId, int limit) {
+        long userId = access.requireUser(authorization);
+        if (friendId <= 0 || friendId == userId || afterId < 0 || limit < 1 || limit > 50)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "撤回游标无效");
+        List<MessageRecall> rows = messages.recalls(Math.min(userId, friendId),
+                Math.max(userId, friendId), afterId, limit + 1);
+        List<MessageRecall> page = rows.subList(0, Math.min(rows.size(), limit));
+        return new com.yuelei.imchat.dto.MessageDtos.RecallPage(page,
+                rows.size() > limit ? page.get(page.size() - 1).id() : null);
     }
 
     public Page history(String authorization, long friendId, Long beforeId, int limit) {

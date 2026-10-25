@@ -15,7 +15,10 @@ export type GroupMessage = {
   body: string;
   kind: "TEXT" | "CAPTION";
   createdAt: string;
+  recalledAt: string | null;
 };
+export type MessageRecall = { id: number; messageId: number; recalledAt: string };
+export type RecallPage = { items: MessageRecall[]; nextAfterId: number | null };
 export type GroupPage = { messages: GroupMessage[]; nextBeforeId: number | null };
 export type GroupSyncPage = { messages: GroupMessage[]; nextAfterId: number | null };
 export type GroupSummary = {
@@ -76,6 +79,10 @@ export const getGroupMessage = (id: number, messageId: number) =>
   request<GroupMessage>(`/${id}/messages/${messageId}`);
 export const sendGroupMessage = (id: number, clientMsgId: string, body: string, mentionedUserIds: number[] = [], kind: "TEXT" | "CAPTION" = "TEXT") =>
   request<GroupMessage>(`/${id}/messages`, { clientMsgId, body, mentionedUserIds, kind });
+export const recallGroupMessage = (id: number, messageId: number) =>
+  request<void>(`/${id}/messages/${messageId}`, undefined, "DELETE");
+export const listGroupRecalls = (id: number, afterId: number) =>
+  request<RecallPage>(`/${id}/messages/recalls?afterId=${afterId}&limit=50`);
 export const markGroupRead = (id: number, lastReadMessageId: number) =>
   request<void>(`/${id}/read`, { lastReadMessageId });
 export const listGroupSummaries = (id: number) =>

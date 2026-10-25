@@ -17,4 +17,5 @@ public interface NoticeDao {
     int markRead(@Param("userId") long userId, @Param("id") long id);
     int markAllRead(@Param("userId") long userId);
     int deleteForGroup(@Param("groupId") long groupId);
+    int deleteForMessage(@Param("messageId") long messageId);
 }

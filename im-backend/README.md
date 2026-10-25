@@ -157,6 +157,35 @@ the caller's identity. Sending also verifies the pair is **currently** friends.
   been received from that friend; the stored read cursor only moves forward.
   Chat Flyway V2 adds the `im_direct_read` table and recipient lookup index.
 
+### Message recall
+
+Chat Flyway V10 adds direct and group recall timestamps and change feeds.
+Within two minutes of sending, a message's sender can use
+`DELETE /api/chats/direct/{friendId}/messages/{messageId}` or
+`DELETE /api/chats/groups/{groupId}/messages/{messageId}`. Group recall also
+requires current membership. The server clears the stored body, keeps a
+timestamped tombstone in history, and removes it from search and unread counts.
+Group recall also removes its mention notices and any saved summary spanning
+that message. Repeating a successful recall returns 204; expired or invalid
+requests fail. Reusing a recalled message's client UUID cannot restore its text.
+
+Clients retrieve missed recalls with `GET` on the corresponding
+`/messages/recalls?afterId=0&limit=50` endpoint. The feed has `items` and
+`nextAfterId`; group access follows the current membership and join cursor.
+The web client merges this feed with history during reconnect. Recall cannot
+erase text already copied or captured outside the application.
+
+After the Java 21 build and service restart, check against two disposable
+accounts on the local dev database (no Ollama required):
+
+```powershell
+Set-Location D:\im-assistant
+python .\im-backend\tools\message_recall_probe.py
+```
+
+Pass `--check-summary` only when the local model is running to verify that
+a saved summary containing a recalled group message is removed.
+
 Run `npm run dev` from `D:\im-assistant\im-web` after restarting Vite so its
 proxy routes `/api/chats` to 8082. Test with two registered accounts in separate
 browser profiles: accept a friend request, open the friend in 联系人 → 发消息,

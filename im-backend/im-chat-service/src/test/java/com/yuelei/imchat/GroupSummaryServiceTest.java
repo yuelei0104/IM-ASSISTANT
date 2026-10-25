@@ -9,6 +9,7 @@ import com.yuelei.imchat.service.GroupSummaryService;
 import com.yuelei.imchat.service.SummaryGenerator;
 import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,6 +24,11 @@ class GroupSummaryServiceTest {
     private final UserAccessClient access = mock(UserAccessClient.class);
     private final SummaryGenerator generator = mock(SummaryGenerator.class);
     private final GroupSummaryService service = new GroupSummaryService(groups, summaries, access, generator);
+
+    @BeforeEach
+    void groupExists() {
+        when(groups.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+    }
 
     @Test
     void outsidersCannotReadOrSendMessagesToTheModel() {
@@ -47,6 +53,7 @@ class GroupSummaryServiceTest {
             assertEquals(23, draft.getRequesterId());
             assertEquals(43, draft.getFirstMessageId());
             assertEquals(51, draft.getLastMessageId());
+            assertEquals(List.of(43L, 51L), draft.getMessageIds());
             draft.setId(7L);
             return 1;
         }).when(summaries).insert(any());
@@ -105,5 +112,20 @@ class GroupSummaryServiceTest {
         ChatException error = assertThrows(ChatException.class, () -> service.generate("Bearer member", 4));
         assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, error.status());
         verify(summaries, never()).visibleById(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void recalledMessagesAreNeverSentToTheModelOrStoredInTheSummary() {
+        when(access.requireUser("Bearer member")).thenReturn(23L);
+        when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
+        var recalled = new GroupMessage(44, 4, 9, "old", "", "TEXT", LocalDateTime.now(), LocalDateTime.now());
+        var live = new GroupMessage(43, 4, 9, "live", "可用内容", "TEXT", LocalDateTime.now(), null);
+        when(groups.history(4, 42, null, 30)).thenReturn(List.of(recalled, live));
+        when(generator.summarize(List.of(live))).thenReturn("可用摘要");
+        when(summaries.insert(any())).thenReturn(0);
+
+        assertThrows(ChatException.class, () -> service.generate("Bearer member", 4));
+        verify(generator).summarize(List.of(live));
+        verify(summaries).insert(argThat(draft -> draft.getMessageIds().equals(List.of(43L))));
     }
 }

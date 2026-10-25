@@ -57,4 +57,7 @@
         JOIN im_group_message m ON m.id = n.message_id
         WHERE m.group_id = #{groupId}
     </delete>
+    <delete id="deleteForMessage">
+        DELETE FROM im_group_mention_notice WHERE message_id = #{messageId}
+    </delete>
 </mapper>

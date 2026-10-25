@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createGroupChat, inviteGroupMembers, leaveGroup, removeGroupMember, transferGroupOwner, dissolveGroup,
-  listGroups, loadGroupMessages,
+  listGroups, loadGroupMessages, recallGroupMessage, listGroupRecalls,
   markGroupRead, sendGroupMessage, syncGroupMessages,
   listGroupSummaries, generateGroupSummary,
 } from "../src/groupApi.ts";
@@ -67,4 +67,21 @@ test("group requests fail without a session before touching the network", async 
   await assert.rejects(leaveGroup(4), /请先登录/);
   await assert.rejects(transferGroupOwner(4, 5), /请先登录/);
   await assert.rejects(dissolveGroup(4), /请先登录/);
+  await assert.rejects(recallGroupMessage(4, 42), /请先登录/);
+});
+
+test("group recall and its change feed are group-scoped", async () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "group-token" : null };
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return options.method === "DELETE" ? new Response(null, { status: 204 })
+      : Response.json({ items: [], nextAfterId: null });
+  };
+  await recallGroupMessage(4, 42);
+  await listGroupRecalls(4, 3);
+  assert.equal(calls[0].url, "/api/chats/groups/4/messages/42");
+  assert.equal(calls[0].options.method, "DELETE");
+  assert.equal(calls[1].url, "/api/chats/groups/4/messages/recalls?afterId=3&limit=50");
+  assert.ok(calls.every((call) => call.options.headers.Authorization === "Bearer group-token"));
 });

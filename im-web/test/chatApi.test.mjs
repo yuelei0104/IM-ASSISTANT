@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage } from "../src/chatApi.ts";
+import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, recallDirectMessage, listDirectRecalls } from "../src/chatApi.ts";
 import { sessionKey } from "../src/authApi.ts";
 
 test("direct messages use the user's token, cursor and stable client id", async () => {
@@ -73,4 +73,21 @@ test("unread summary and read receipt use authenticated endpoints", async () => 
   await markDirectRead(2, 41);
   assert.equal(calls[1].url, "/api/chats/direct/2/read");
   assert.deepEqual(JSON.parse(calls[1].options.body), { lastReadMessageId: 41 });
+});
+
+test("recall and recall feed use authenticated scoped requests", async () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "alice-token" : null };
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    assert.equal(options.headers.Authorization, "Bearer alice-token");
+    return options.method === "DELETE" ? new Response(null, { status: 204 })
+      : Response.json({ items: [{ id: 7, messageId: 42, recalledAt: "2026-10-25T12:00:00" }], nextAfterId: null });
+  };
+  await recallDirectMessage(2, 42);
+  assert.deepEqual(await listDirectRecalls(2, 6), { items: [{ id: 7, messageId: 42,
+    recalledAt: "2026-10-25T12:00:00" }], nextAfterId: null });
+  assert.equal(calls[0].url, "/api/chats/direct/2/messages/42");
+  assert.equal(calls[0].options.method, "DELETE");
+  assert.equal(calls[1].url, "/api/chats/direct/2/messages/recalls?afterId=6&limit=50");
 });

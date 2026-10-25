@@ -7,6 +7,7 @@ import com.yuelei.imchat.dto.GroupDtos;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.GroupChat;
 import com.yuelei.imchat.model.GroupMessage;
+import com.yuelei.imchat.model.MessageRecall;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -138,6 +139,7 @@ public class GroupService {
         // Child rows must be removed before the group because the schema has foreign keys.
         notices.deleteForGroup(groupId);
         summaries.deleteForGroup(groupId);
+        dao.deleteRecalls(groupId);
         dao.deleteMessages(groupId);
         dao.deleteMembers(groupId);
         if (dao.deleteGroup(groupId) != 1)
@@ -192,10 +194,40 @@ public class GroupService {
     }
 
     private GroupMessage existing(GroupMessage prior, long groupId, String body, String kind, List<Long> targets) {
-        if (prior.groupId() != groupId || !prior.body().equals(body) || !prior.kind().equals(kind)
+        if (prior.recalledAt() != null || prior.groupId() != groupId || !prior.body().equals(body) || !prior.kind().equals(kind)
                 || !notices.recipients(prior.id()).equals(targets.stream().sorted().toList()))
             throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于另一条消息");
         return prior;
+    }
+
+    @Transactional
+    public void recall(String authorization, long groupId, long messageId) {
+        long userId = access.requireUser(authorization);
+        if (messageId <= 0) throw new ChatException(HttpStatus.BAD_REQUEST, "消息编号无效");
+        if (dao.lockGroup(groupId) == null) throw new ChatException(HttpStatus.NOT_FOUND, "讨论室不存在");
+        var membership = requireMember(groupId, userId);
+        GroupMessage message = dao.messageById(groupId, messageId, membership.joinedAfterId());
+        if (message == null || message.senderId() != userId)
+            throw new ChatException(HttpStatus.NOT_FOUND, "只能撤回自己发送的可见消息");
+        if (message.recalledAt() != null) return;
+        if (dao.recall(groupId, messageId, userId) != 1)
+            throw new ChatException(HttpStatus.CONFLICT, "只能在发送后两分钟内撤回");
+        dao.addRecall(groupId, messageId);
+        var mentioned = notices.recipients(messageId);
+        notices.deleteForMessage(messageId);
+        summaries.deleteContaining(groupId, messageId);
+        events.publishEvent(new GroupEvent(groupId, messageId, dao.memberIds(groupId)));
+        if (!mentioned.isEmpty()) events.publishEvent(new MentionEvent(mentioned));
+    }
+
+    public GroupDtos.RecallPage recalls(String authorization, long groupId, long afterId, int limit) {
+        long userId = access.requireUser(authorization);
+        if (afterId < 0 || limit < 1 || limit > 50)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "撤回游标无效");
+        var membership = requireMember(groupId, userId);
+        List<MessageRecall> rows = dao.recalls(groupId, membership.joinedAfterId(), afterId, limit + 1);
+        List<MessageRecall> page = rows.subList(0, Math.min(rows.size(), limit));
+        return new GroupDtos.RecallPage(page, rows.size() > limit ? page.get(page.size() - 1).id() : null);
     }
 
     public GroupDtos.Page history(String authorization, long groupId, Long beforeId, int limit) {

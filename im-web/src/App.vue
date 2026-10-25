@@ -43,10 +43,11 @@ import {
   type ContactProfile,
   type ContactRequest,
 } from "./contactApi";
-import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, searchDirectMessages, type DirectMessage } from "./chatApi";
+import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, searchDirectMessages, recallDirectMessage, listDirectRecalls, type DirectMessage, type MessageRecall } from "./chatApi";
 import {
   createGroupChat, getGroup, getGroupMessage, inviteGroupMembers, leaveGroup, removeGroupMember,
   transferGroupOwner, dissolveGroup,
+  recallGroupMessage, listGroupRecalls,
   listGroups, loadGroupMessages,
   markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages, listGroupSummaries, generateGroupSummary,
   type GroupChat, type GroupMessage, type GroupSummary,
@@ -205,6 +206,11 @@ const directSyncCursor = ref<number | null>(null);
 const serverGroups = ref<GroupChat[]>([]);
 const groupsNextCursor = ref<number | null>(null);
 const groupMessages = ref<GroupMessage[]>([]);
+const directRecallCursor = ref(0);
+const groupRecallCursor = ref(0);
+const directRecalled = new Map<number, string>();
+const groupRecalled = new Map<number, string>();
+const recallingMessageId = ref<string | null>(null);
 const groupSummaries = ref<GroupSummary[]>([]);
 const summaryBusy = ref(false);
 const summaryError = ref("");
@@ -308,6 +314,10 @@ watch(activeId, () => {
   stopVoice();
   directMessages.value = [];
   groupMessages.value = [];
+  directRecallCursor.value = 0;
+  groupRecallCursor.value = 0;
+  directRecalled.clear();
+  groupRecalled.clear();
   directSyncCursor.value = null;
   groupSyncCursor.value = null;
   nextBeforeId.value = null;
@@ -371,9 +381,11 @@ function renderMessage(m: DirectMessage | GroupMessage): Message {
     id: `${"groupId" in m ? "group" : "server"}-message-${m.id}`,
     conversationId: activeId.value,
     senderId: m.senderId === currentAccount.value?.id ? selfId : `user-${m.senderId}`,
-    text: m.body,
+    text: m.recalledAt ? "消息已撤回" : m.body,
     time: new Date(m.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-    kind: "groupId" in m && m.kind === "CAPTION" ? "voice" : "text",
+    kind: !m.recalledAt && "groupId" in m && m.kind === "CAPTION" ? "voice" : "text",
+    recalled: !!m.recalledAt,
+    createdAt: m.createdAt,
   };
 }
 const messages = computed<Message[]>(() => directPeer(activeId.value)
@@ -430,7 +442,7 @@ const focusCount = computed(
 );
 const summarySources = computed(() =>
   (range.value === "recent" ? messages.value.slice(-5) : messages.value)
-    .filter((m) => m.kind !== "system" && m.senderId !== selfId)
+    .filter((m) => m.kind !== "system" && !m.recalled && m.senderId !== selfId)
     .slice(-3),
 );
 async function loadGroupSummaries() {
@@ -525,8 +537,34 @@ function openChat(id: string, source?: string) {
 }
 function mergeDirect(incoming: DirectMessage[]) {
   const byId = new Map(directMessages.value.map((m) => [m.id, m]));
-  for (const m of incoming) byId.set(m.id, m);
+  for (const m of incoming) {
+    const recalledAt = directRecalled.get(m.id) || m.recalledAt;
+    byId.set(m.id, recalledAt ? { ...m, body: "", recalledAt } : m);
+  }
   directMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
+}
+function applyDirectRecall(recall: MessageRecall) {
+  directRecalled.set(recall.messageId, recall.recalledAt);
+  const redact = (m: DirectMessage | GroupMessage) =>
+    m.id === recall.messageId && !("groupId" in m) ? { ...m, body: "", recalledAt: recall.recalledAt } : m;
+  directMessages.value = directMessages.value.map((m) => m.id === recall.messageId
+    ? { ...m, body: "", recalledAt: recall.recalledAt } : m);
+  contextMessages.value = contextMessages.value.map(redact);
+  if (contextTarget.value && contextTarget.value.id === recall.messageId && !("groupId" in contextTarget.value))
+    contextTarget.value = redact(contextTarget.value);
+  historyResults.value = historyResults.value.filter((m) => "groupId" in m || m.id !== recall.messageId);
+}
+async function syncDirectRecalls(peerId: number, accountId: number, sequence: number) {
+  await syncForward(directRecallCursor.value,
+    async (cursor) => {
+      const page = await listDirectRecalls(peerId, cursor);
+      return { messages: page.items, nextAfterId: page.nextAfterId };
+    }, (items, cursor) => {
+      if (sequence !== chatSeq || currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return false;
+      items.forEach(applyDirectRecall);
+      directRecallCursor.value = cursor;
+      return true;
+    });
 }
 async function refreshUnread() {
   const accountId = currentAccount.value?.id;
@@ -608,6 +646,7 @@ async function refreshDirectChat() {
         return true;
       });
     if (resumed === null) return;
+    await syncDirectRecalls(peerId, accountId, sequence);
     chatError.value = "";
     await nextTick();
     scrollBottom();
@@ -678,6 +717,8 @@ function forgetGroup(groupId: number) {
     closeMessageContext(false);
     stopVoice();
     groupMessages.value = [];
+    groupRecallCursor.value = 0;
+    groupRecalled.clear();
     groupSummaries.value = [];
     groupSyncCursor.value = null;
     groupNextBeforeId.value = null;
@@ -722,8 +763,37 @@ async function loadMoreGroups() {
 }
 function mergeGroup(incoming: GroupMessage[]) {
   const byId = new Map(groupMessages.value.map((m) => [m.id, m]));
-  for (const message of incoming) byId.set(message.id, message);
+  for (const message of incoming) {
+    const recalledAt = groupRecalled.get(message.id) || message.recalledAt;
+    byId.set(message.id, recalledAt ? { ...message, body: "", recalledAt } : message);
+  }
   groupMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
+}
+function applyGroupRecall(recall: MessageRecall) {
+  groupRecalled.set(recall.messageId, recall.recalledAt);
+  const redact = (m: DirectMessage | GroupMessage) =>
+    m.id === recall.messageId && "groupId" in m ? { ...m, body: "", recalledAt: recall.recalledAt } : m;
+  groupMessages.value = groupMessages.value.map((m) => m.id === recall.messageId
+    ? { ...m, body: "", recalledAt: recall.recalledAt } : m);
+  contextMessages.value = contextMessages.value.map(redact);
+  if (contextTarget.value && contextTarget.value.id === recall.messageId && "groupId" in contextTarget.value)
+    contextTarget.value = redact(contextTarget.value);
+  historyResults.value = historyResults.value.filter((m) => !("groupId" in m) || m.id !== recall.messageId);
+  // A cached summary may contain text from the recalled message.
+  groupSummaries.value = [];
+  if (showSummary.value) void loadGroupSummaries();
+}
+async function syncGroupRecalls(groupId: number, accountId: number, sequence: number) {
+  await syncForward(groupRecallCursor.value,
+    async (cursor) => {
+      const page = await listGroupRecalls(groupId, cursor);
+      return { messages: page.items, nextAfterId: page.nextAfterId };
+    }, (items, cursor) => {
+      if (sequence !== chatSeq || currentAccount.value?.id !== accountId || serverGroupId(activeId.value) !== groupId) return false;
+      items.forEach(applyGroupRecall);
+      groupRecallCursor.value = cursor;
+      return true;
+    });
 }
 async function markVisibleGroupRead(groupId: number) {
   const accountId = currentAccount.value?.id;
@@ -771,6 +841,7 @@ async function refreshGroupChat() {
         return true;
       });
     if (resumed === null) return;
+    await syncGroupRecalls(groupId, accountId, sequence);
     chatError.value = "";
     await nextTick();
     if (contextActive.value) { /* Keep the context view in place during background sync. */ }
@@ -963,6 +1034,10 @@ function applyAccount(account: Account) {
   knownPeers.value = loadKnownPeers(account);
   directMessages.value = [];
   groupMessages.value = [];
+  directRecallCursor.value = 0;
+  groupRecallCursor.value = 0;
+  directRecalled.clear();
+  groupRecalled.clear();
   groupSummaries.value = [];
   summaryBusy.value = false;
   summaryError.value = "";
@@ -1214,6 +1289,10 @@ async function signOut() {
   knownPeers.value = [];
   directMessages.value = [];
   groupMessages.value = [];
+  directRecallCursor.value = 0;
+  groupRecallCursor.value = 0;
+  directRecalled.clear();
+  groupRecalled.clear();
   groupSummaries.value = [];
   summaryBusy.value = false;
   summaryError.value = "";
@@ -1397,8 +1476,39 @@ function closeMessageContext(showLatest = true) {
 }
 function mergeContext(incoming: Array<DirectMessage | GroupMessage>) {
   const byId = new Map(contextMessages.value.map((m) => [m.id, m]));
-  for (const m of incoming) byId.set(m.id, m);
+  for (const m of incoming) {
+    const recalledAt = ("groupId" in m ? groupRecalled : directRecalled).get(m.id) || m.recalledAt;
+    byId.set(m.id, recalledAt ? { ...m, body: "", recalledAt } : m);
+  }
   contextMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
+}
+function canRecallMessage(m: Message) {
+  return m.senderId === selfId && !m.recalled && !!m.createdAt &&
+    /^(server|group)-message-[1-9]\d*$/.test(m.id) &&
+    Date.now() - new Date(m.createdAt).getTime() < 2 * 60_000;
+}
+async function recallVisibleMessage(m: Message) {
+  const peerId = directPeer(activeId.value);
+  const groupId = serverGroupId(activeId.value);
+  const messageId = Number(m.id.split("-").at(-1));
+  if (!canRecallMessage(m) || recallingMessageId.value || !Number.isSafeInteger(messageId) ||
+      (!peerId && !groupId) || !window.confirm("确定撤回这条消息？所有设备会显示撤回标记。")) return;
+  const accountId = currentAccount.value?.id;
+  const conversationId = activeId.value;
+  recallingMessageId.value = m.id;
+  try {
+    if (peerId) await recallDirectMessage(peerId, messageId);
+    else await recallGroupMessage(groupId!, messageId);
+    if (currentAccount.value?.id !== accountId || activeId.value !== conversationId) return;
+    const recall = { id: 0, messageId, recalledAt: new Date().toISOString() };
+    if (peerId) applyDirectRecall(recall);
+    else applyGroupRecall(recall);
+    notify("消息已撤回");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "撤回失败");
+  } finally {
+    recallingMessageId.value = null;
+  }
 }
 async function openMessageContext(target: DirectMessage | GroupMessage | null) {
   const accountId = currentAccount.value?.id;
@@ -2638,8 +2748,11 @@ onBeforeUnmount(() => {
                       m.senderId === "me" ? "我" : person(m.senderId).name
                     }}</span
                     ><time>{{ m.time }}</time>
+                    <button v-if="canRecallMessage(m)" type="button" class="text-button message-recall"
+                      :disabled="!!recallingMessageId" :aria-label="`撤回消息 ${m.time}`"
+                      @click="recallVisibleMessage(m)">撤回</button>
                   </div>
-                  <div class="bubble">
+                  <div :class="['bubble', { recalled: m.recalled }]">
                     <span v-if="m.kind === 'voice'" class="voice-label"
                       ><AppIcon name="mic" :size="14" /> 语音转写</span
                     >{{ m.text }}
