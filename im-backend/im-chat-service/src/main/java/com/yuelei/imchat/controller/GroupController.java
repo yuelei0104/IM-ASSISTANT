@@ -40,6 +40,20 @@ public class GroupController {
         return groups.invite(auth, groupId, request);
     }
 
+    @DeleteMapping("/{groupId}/members/me")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void leave(@RequestHeader(value = "Authorization", required = false) String auth,
+                      @PathVariable long groupId) {
+        groups.leave(auth, groupId);
+    }
+
+    @DeleteMapping("/{groupId}/members/{memberId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void remove(@RequestHeader(value = "Authorization", required = false) String auth,
+                       @PathVariable long groupId, @PathVariable long memberId) {
+        groups.remove(auth, groupId, memberId);
+    }
+
     @PostMapping("/{groupId}/messages")
     public GroupMessage send(@RequestHeader(value = "Authorization", required = false) String auth,
                              @PathVariable long groupId, @Valid @RequestBody GroupDtos.SendGroup request) {

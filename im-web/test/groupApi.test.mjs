@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  createGroupChat, inviteGroupMembers, listGroups, loadGroupMessages,
+  createGroupChat, inviteGroupMembers, leaveGroup, removeGroupMember, listGroups, loadGroupMessages,
   markGroupRead, sendGroupMessage, syncGroupMessages,
   listGroupSummaries, generateGroupSummary,
 } from "../src/groupApi.ts";
@@ -13,13 +13,17 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options });
     assert.equal(options.headers.Authorization, "Bearer group-token");
-    return options.method === "GET"
+    return options.method === "DELETE" || url.endsWith("/read")
+      ? new Response(null, { status: 204 })
+      : options.method === "GET"
       ? Response.json(url.endsWith("/summaries") ? [] : url.includes("messages") ? { messages: [], nextBeforeId: null } : { items: [], nextBeforeId: null })
-      : url.endsWith("/read") ? new Response(null, { status: 204 }) : Response.json({ id: 4 });
+      : Response.json({ id: 4 });
   };
   await listGroups(12);
   await createGroupChat("讨论", [2, 3]);
   await inviteGroupMembers(4, [5]);
+  await leaveGroup(4);
+  await removeGroupMember(4, 5);
   await loadGroupMessages(4, 31);
   await syncGroupMessages(4, 31);
   await sendGroupMessage(4, "e9873e73-1326-4329-a4c0-936912a48e37", "你好");
@@ -30,18 +34,22 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   assert.equal(calls[0].url, "/api/chats/groups?limit=50&beforeId=12");
   assert.deepEqual(JSON.parse(calls[1].options.body), { name: "讨论", friendIds: [2, 3] });
   assert.deepEqual(JSON.parse(calls[2].options.body), { friendIds: [5] });
-  assert.equal(calls[3].url, "/api/chats/groups/4/messages?limit=50&beforeId=31");
-  assert.equal(calls[4].url, "/api/chats/groups/4/messages/sync?afterId=31&limit=50");
-  assert.deepEqual(JSON.parse(calls[5].options.body), {
+  assert.equal(calls[3].url, "/api/chats/groups/4/members/me");
+  assert.equal(calls[3].options.method, "DELETE");
+  assert.equal(calls[4].url, "/api/chats/groups/4/members/5");
+  assert.equal(calls[4].options.method, "DELETE");
+  assert.equal(calls[5].url, "/api/chats/groups/4/messages?limit=50&beforeId=31");
+  assert.equal(calls[6].url, "/api/chats/groups/4/messages/sync?afterId=31&limit=50");
+  assert.deepEqual(JSON.parse(calls[7].options.body), {
     clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e37", body: "你好", mentionedUserIds: [], kind: "TEXT",
   });
-  assert.deepEqual(JSON.parse(calls[6].options.body), {
+  assert.deepEqual(JSON.parse(calls[8].options.body), {
     clientMsgId: "e9873e73-1326-4329-a4c0-936912a48e38", body: "字幕片段", mentionedUserIds: [], kind: "CAPTION",
   });
-  assert.deepEqual(JSON.parse(calls[7].options.body), { lastReadMessageId: 34 });
-  assert.equal(calls[8].url, "/api/chats/groups/4/summaries");
-  assert.equal(calls[9].url, "/api/chats/groups/4/summaries");
-  assert.equal(calls[9].options.method, "POST");
+  assert.deepEqual(JSON.parse(calls[9].options.body), { lastReadMessageId: 34 });
+  assert.equal(calls[10].url, "/api/chats/groups/4/summaries");
+  assert.equal(calls[11].url, "/api/chats/groups/4/summaries");
+  assert.equal(calls[11].options.method, "POST");
 });
 
 test("group requests fail without a session before touching the network", async () => {
@@ -49,4 +57,5 @@ test("group requests fail without a session before touching the network", async 
   globalThis.fetch = () => { throw new Error("unexpected network request"); };
   await assert.rejects(listGroups(), /请先登录/);
   await assert.rejects(generateGroupSummary(4), /请先登录/);
+  await assert.rejects(leaveGroup(4), /请先登录/);
 });

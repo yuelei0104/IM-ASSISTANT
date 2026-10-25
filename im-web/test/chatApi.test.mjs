@@ -35,17 +35,19 @@ test("socket authenticates without URL token and refreshes after a notification"
     send(value) { this.sent.push(value); }
     close() { this.readyState = 3; this.onclose?.(); }
   };
-  let updates = 0;
-  const connection = connectChatSocket(() => updates++);
+  const updates = [];
+  const connection = connectChatSocket((kind, groupId) => updates.push([kind, groupId]));
   assert.equal(opened.url, "ws://localhost:5173/api/chats/ws");
   opened.onopen();
   assert.deepEqual(opened.sent, ["AUTH alice-token"]);
   opened.onmessage({ data: "READY" });
   opened.onmessage({ data: "MSG 42 2 1" });
   opened.onmessage({ data: "GROUP 7 42" });
+  opened.onmessage({ data: "GROUP 7 0" });
   opened.onmessage({ data: "NOTICE" });
   assert.equal(connection.connected(), true);
-  assert.equal(updates, 4);
+  assert.deepEqual(updates, [[undefined, undefined], ["direct", undefined],
+    ["group", undefined], ["group", 7], ["notice", undefined]]);
   connection.close();
   assert.equal(connection.connected(), false);
 });

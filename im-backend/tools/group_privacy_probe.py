@@ -166,11 +166,43 @@ def main():
     history = expect("newcomer new history", call(args.chat_url, path + "/messages", c), 200)
     check([m["id"] for m in history["messages"]] == [new["id"]],
           "newcomer did not see exactly the post-join caption")
+
+    expect("owner cannot leave", call(args.chat_url, path + "/members/me", a, method="DELETE"), 409)
+    expect("member cannot remove someone else", call(args.chat_url,
+           path + f"/members/{member}", c, method="DELETE"), 403)
+    mention = expect("mention current member", call(args.chat_url, path + "/messages", a, {
+        "clientMsgId": str(uuid.uuid4()), "body": "仅在群内可见的点名内容",
+        "mentionedUserIds": [newcomer], "kind": "TEXT",
+    }), 200)
+    inbox = expect("member notice", call(args.chat_url, "/api/chats/notices", c), 200)
+    check(any(item["messageId"] == mention["id"] for item in inbox["items"]),
+          "current member cannot see own mention")
+
+    expect("owner removes member", call(args.chat_url,
+           path + f"/members/{newcomer}", a, method="DELETE"), 204)
+    expect("removed member cannot read history", call(args.chat_url, path + "/messages", c), 403)
+    expect("removed member cannot read summaries", call(args.chat_url, path + "/summaries", c), 403)
+    removed_inbox = expect("removed member notices", call(args.chat_url, "/api/chats/notices", c), 200)
+    check(not any(item["groupId"] == group_id for item in removed_inbox["items"])
+          and removed_inbox["unreadCount"] == 0, "removed member can still read old mention")
+
+    expect("reinvite member", call(args.chat_url, path + "/members", a,
+           {"friendIds": [newcomer]}), 200)
+    rejoined = expect("rejoined member history", call(args.chat_url, path + "/messages", c), 200)
+    check(not rejoined["messages"], "rejoined member can read pre-rejoin messages")
+    rejoined_inbox = expect("rejoined member notices", call(args.chat_url, "/api/chats/notices", c), 200)
+    check(not any(item["groupId"] == group_id for item in rejoined_inbox["items"]),
+          "rejoined member can read pre-rejoin mention")
+    expect("member leaves", call(args.chat_url, path + "/members/me", c, method="DELETE"), 204)
+    expect("former member cannot send", call(args.chat_url, path + "/messages", c, {
+        "clientMsgId": str(uuid.uuid4()), "body": "不得发送", "mentionedUserIds": [],
+    }), 403)
     print("PASS: outsider denied; pre-join captions hidden across history/sync/search/direct lookup;")
-    print("      post-join caption visible" + ("; pre-join summary hidden" if summary_id else ""))
+    print("      post-join caption visible; leave/removal revoke access and mentions; rejoin hides old content"
+          + ("; pre-join summary hidden" if summary_id else ""))
     if not args.check_summary:
         print("Summary content boundary not exercised (use --check-summary with a local model).")
-    print("Three disposable accounts and two caption messages remain in the local development database.")
+    print("Three disposable accounts, two captions and one mention remain in the local development database.")
 
 
 if __name__ == "__main__":

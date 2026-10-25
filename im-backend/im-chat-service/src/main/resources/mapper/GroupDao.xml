@@ -58,6 +58,9 @@
         INSERT INTO im_group_member (group_id, user_id, joined_after_id, last_read_id)
         VALUES (#{groupId}, #{userId}, #{cursor}, #{cursor})
     </insert>
+    <delete id="removeMember">
+        DELETE FROM im_group_member WHERE group_id = #{groupId} AND user_id = #{userId}
+    </delete>
     <select id="latestId" resultType="long">
         SELECT COALESCE(MAX(id), 0) FROM im_group_message WHERE group_id = #{groupId}
     </select>

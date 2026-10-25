@@ -31,6 +31,7 @@ public interface GroupDao {
     Membership membership(@Param("groupId") long groupId, @Param("userId") long userId);
     int addMember(@Param("groupId") long groupId, @Param("userId") long userId,
                   @Param("cursor") long cursor);
+    int removeMember(@Param("groupId") long groupId, @Param("userId") long userId);
     Long latestId(@Param("groupId") long groupId);
     int insertMessage(@Param("groupId") long groupId, @Param("senderId") long senderId,
                       @Param("clientMsgId") String clientMsgId, @Param("body") String body,

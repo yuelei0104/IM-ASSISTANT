@@ -45,7 +45,8 @@ import {
 } from "./contactApi";
 import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, sendDirectMessage, searchDirectMessages, type DirectMessage } from "./chatApi";
 import {
-  createGroupChat, getGroupMessage, inviteGroupMembers, listGroups, loadGroupMessages,
+  createGroupChat, getGroup, getGroupMessage, inviteGroupMembers, leaveGroup, removeGroupMember,
+  listGroups, loadGroupMessages,
   markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages, listGroupSummaries, generateGroupSummary,
   type GroupChat, type GroupMessage, type GroupSummary,
 } from "./groupApi";
@@ -650,7 +651,10 @@ async function refreshGroups() {
   try {
     const result = await listGroups();
     if (sequence !== groupsSeq || currentAccount.value?.id !== accountId) return;
-    const byId = new Map(serverGroups.value.map((g) => [g.id, g]));
+    // The newest page is authoritative; retain only older pages the user already loaded.
+    const byId = new Map(serverGroups.value
+      .filter((g) => result.nextBeforeId !== null && g.id < result.nextBeforeId)
+      .map((g) => [g.id, g]));
     for (const group of result.items) byId.set(group.id, group);
     serverGroups.value = [...byId.values()].sort((a, b) => b.id - a.id);
     groupsNextCursor.value = result.nextBeforeId;
@@ -659,6 +663,44 @@ async function refreshGroups() {
   } catch (error) {
     if (sequence === groupsSeq && !serverGroups.value.length)
       chatError.value = error instanceof Error ? error.message : "讨论室加载失败";
+  }
+}
+function forgetGroup(groupId: number) {
+  groupsSeq++; // Ignore a group list that was fetched before membership changed.
+  noticeSeq++;
+  serverGroups.value = serverGroups.value.filter((group) => group.id !== groupId);
+  mentionNotices.value = mentionNotices.value.filter((notice) => notice.groupId !== groupId);
+  if (serverGroupId(activeId.value) === groupId) {
+    chatSeq++;
+    summarySeq++;
+    closeHistorySearch();
+    closeMessageContext(false);
+    stopVoice();
+    groupMessages.value = [];
+    groupSummaries.value = [];
+    groupSyncCursor.value = null;
+    groupNextBeforeId.value = null;
+    groupPendingSend = null;
+    chatBusy.value = false;
+    chatError.value = "";
+    infoOpen.value = false;
+    activeId.value = "";
+  }
+  groupLastRead.delete(groupId);
+  groupReadInFlight.delete(groupId);
+  void refreshNotices();
+}
+async function reconcileGroupMembership(groupId: number) {
+  const accountId = currentAccount.value?.id;
+  if (!accountId) return;
+  try {
+    const group = await getGroup(groupId);
+    if (currentAccount.value?.id !== accountId) return;
+    serverGroups.value = [group, ...serverGroups.value.filter((item) => item.id !== groupId)]
+      .sort((a, b) => b.id - a.id);
+  } catch (error) {
+    if (currentAccount.value?.id === accountId && error instanceof ApiError && error.status === 403)
+      forgetGroup(groupId);
   }
 }
 async function loadMoreGroups() {
@@ -736,7 +778,10 @@ async function refreshGroupChat() {
     else scrollBottom();
     void markVisibleGroupRead(groupId);
   } catch (error) {
-    if (sequence === chatSeq) chatError.value = error instanceof Error ? error.message : "群消息加载失败";
+    if (sequence === chatSeq) {
+      if (error instanceof ApiError && error.status === 403) forgetGroup(groupId);
+      else chatError.value = error instanceof Error ? error.message : "群消息加载失败";
+    }
   } finally {
     if (sequence === chatSeq) chatBusy.value = false;
     if (pendingGroupRefresh && sequence === chatSeq) {
@@ -775,7 +820,9 @@ async function refreshNotices() {
   try {
     const result = await listMentionNotices();
     if (sequence !== noticeSeq || currentAccount.value?.id !== accountId) return;
-    const byId = new Map(mentionNotices.value.map((n) => [n.id, n]));
+    const byId = new Map(mentionNotices.value
+      .filter((n) => result.nextBeforeId !== null && n.id < result.nextBeforeId)
+      .map((n) => [n.id, n]));
     for (const item of result.items) byId.set(item.id, item);
     mentionNotices.value = [...byId.values()].sort((a, b) => b.id - a.id);
     noticeNextBeforeId.value = result.nextBeforeId;
@@ -810,16 +857,19 @@ function mentionMember(id: string) {
   composer.value += `${composer.value && !/\s$/.test(composer.value) ? " " : ""}${token} `;
   mentionPickerOpen.value = false;
 }
-function onChatEvent(kind?: "direct" | "group" | "notice") {
+function onChatEvent(kind?: "direct" | "group" | "notice", membershipGroupId?: number) {
   if (!currentAccount.value) return;
   if (!kind || kind === "direct") void refreshUnread();
-  if (!kind || kind === "group") void refreshGroups();
+  if (!kind || kind === "group") {
+    const refreshed = refreshGroups();
+    if (membershipGroupId) void refreshed.then(() => reconcileGroupMembership(membershipGroupId));
+  }
   if (!kind || kind === "notice") void refreshNotices();
   if ((!kind || kind === "direct") && page.value === "chat" && directPeer(activeId.value)) {
     if (chatBusy.value) pendingRealtimeRefresh = true;
     else void refreshDirectChat();
   }
-  if ((!kind || kind === "group") && page.value === "chat" && serverGroupId(activeId.value))
+  if ((!kind || kind === "group") && !membershipGroupId && page.value === "chat" && serverGroupId(activeId.value))
     void refreshGroupChat();
 }
 const chatPoll = setInterval(() => {
@@ -1530,6 +1580,40 @@ async function addMembers() {
     notify("邀请已发送，新成员可以查看加入后的消息");
   } catch (error) {
     friendError.value = error instanceof Error ? error.message : "邀请失败";
+  } finally {
+    groupBusy.value = false;
+  }
+}
+async function leaveActiveGroup() {
+  const groupId = serverGroupId(activeId.value);
+  if (!groupId || active.value?.ownerId === selfId || groupBusy.value ||
+      !window.confirm("确定退出讨论室？退出后无法查看原群的消息、点名通知和摘要。")) return;
+  groupBusy.value = true;
+  try {
+    await leaveGroup(groupId);
+    forgetGroup(groupId);
+    notify("已退出讨论室");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "退出失败");
+  } finally {
+    groupBusy.value = false;
+  }
+}
+async function removeActiveGroupMember(id: string) {
+  const groupId = serverGroupId(activeId.value);
+  const memberId = Number(id.slice(5));
+  if (!groupId || active.value?.ownerId !== selfId || !Number.isSafeInteger(memberId) ||
+      memberId <= 0 || groupBusy.value ||
+      !window.confirm(`确定将 ${person(id).name} 移出讨论室？对方将无法继续查看群内容。`)) return;
+  groupBusy.value = true;
+  try {
+    await removeGroupMember(groupId, memberId);
+    serverGroups.value = serverGroups.value.map((group) => group.id === groupId
+      ? { ...group, memberIds: group.memberIds.filter((member) => member !== memberId) }
+      : group);
+    notify("成员已移出讨论室");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "移除失败");
   } finally {
     groupBusy.value = false;
   }
@@ -3306,10 +3390,15 @@ onBeforeUnmount(() => {
             }}</span
             ><span>{{ person(id).name }}</span
             ><small v-if="active.ownerId === id">群主</small>
+            <button v-else-if="active.ownerId === 'me'" class="text-button member-remove"
+              :disabled="groupBusy" :aria-label="`移出 ${person(id).name}`"
+              @click="removeActiveGroupMember(id)">移出</button>
           </div>
           <p v-if="active.ownerId !== 'me'" class="drawer-hint">
             仅群主可邀请自己的好友。
-          </p></template
+          </p>
+          <button v-if="active.ownerId !== 'me'" class="text-button drawer-leave"
+            :disabled="groupBusy" @click="leaveActiveGroup">退出讨论室</button></template
         >
         <div class="drawer-section-heading"><strong>会话偏好</strong></div>
         <label class="drawer-toggle"
