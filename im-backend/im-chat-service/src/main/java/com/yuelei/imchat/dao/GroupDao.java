@@ -1,6 +1,7 @@
 package com.yuelei.imchat.dao;
 
 import com.yuelei.imchat.model.GroupMessage;
+import com.yuelei.imchat.model.MessageRecall;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -35,6 +36,7 @@ public interface GroupDao {
     int transferOwner(@Param("groupId") long groupId, @Param("ownerId") long ownerId);
     int deleteMembers(@Param("groupId") long groupId);
     int deleteMessages(@Param("groupId") long groupId);
+    int deleteRecalls(@Param("groupId") long groupId);
     int deleteGroup(@Param("groupId") long groupId);
     Long latestId(@Param("groupId") long groupId);
     int insertMessage(@Param("groupId") long groupId, @Param("senderId") long senderId,
@@ -43,6 +45,11 @@ public interface GroupDao {
     GroupMessage byClientId(@Param("senderId") long senderId, @Param("clientMsgId") String clientMsgId);
     GroupMessage messageById(@Param("groupId") long groupId, @Param("messageId") long messageId,
                              @Param("joinedAfterId") long joinedAfterId);
+    int recall(@Param("groupId") long groupId, @Param("messageId") long messageId,
+               @Param("senderId") long senderId);
+    int addRecall(@Param("groupId") long groupId, @Param("messageId") long messageId);
+    List<MessageRecall> recalls(@Param("groupId") long groupId, @Param("joinedAfterId") long joinedAfterId,
+                                @Param("afterId") long afterId, @Param("limit") int limit);
     List<GroupMessage> history(@Param("groupId") long groupId, @Param("joinedAfterId") long joinedAfterId,
                                @Param("beforeId") Long beforeId, @Param("limit") int limit);
     List<GroupMessage> search(@Param("groupId") long groupId, @Param("joinedAfterId") long joinedAfterId,

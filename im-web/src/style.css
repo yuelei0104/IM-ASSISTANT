@@ -1577,6 +1577,8 @@ svg {
 .member-actions { margin-left: auto; display: inline-flex; gap: 8px; }
 .drawer-leave { margin-top: 14px; }
 .drawer-dissolve { margin-top: 14px; color: #b04747; }
+.message-recall { font-size: 11px; padding: 0 4px; }
+.bubble.recalled { color: #748c92; background: #edf2f3; font-style: italic; }
 .drawer-toggle {
   display: flex;
   justify-content: space-between;

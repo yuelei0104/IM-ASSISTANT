@@ -18,6 +18,7 @@ public final class GroupDtos {
     public record Groups(List<GroupChat> items, Long nextBeforeId) { }
     public record Page(List<GroupMessage> messages, Long nextBeforeId) { }
     public record SyncPage(List<GroupMessage> messages, Long nextAfterId) { }
+    public record RecallPage(List<com.yuelei.imchat.model.MessageRecall> items, Long nextAfterId) { }
     public record Read(long lastReadMessageId) { }
     public record SendGroup(
             @NotBlank @Pattern(regexp = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}") String clientMsgId,

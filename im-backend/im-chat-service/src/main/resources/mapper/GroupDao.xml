@@ -25,6 +25,14 @@
             <arg column="body" javaType="java.lang.String"/>
             <arg column="kind" javaType="java.lang.String"/>
             <arg column="created_at" javaType="java.time.LocalDateTime"/>
+            <arg column="recalled_at" javaType="java.time.LocalDateTime"/>
+        </constructor>
+    </resultMap>
+    <resultMap id="recall" type="com.yuelei.imchat.model.MessageRecall">
+        <constructor>
+            <idArg column="id" javaType="_long"/>
+            <arg column="message_id" javaType="_long"/>
+            <arg column="recalled_at" javaType="java.time.LocalDateTime"/>
         </constructor>
     </resultMap>
     <insert id="insertGroup" parameterType="com.yuelei.imchat.dao.GroupDao$NewGroup"
@@ -41,7 +49,7 @@
         SELECT g.id, g.name, g.owner_id,
                (SELECT COUNT(*) FROM im_group_message m FORCE INDEX (idx_group_history)
                 WHERE m.group_id = g.id AND m.id &gt; GREATEST(gm.joined_after_id, gm.last_read_id)
-                  AND m.sender_id != #{userId}) AS unread_count
+                  AND m.sender_id != #{userId} AND m.recalled_at IS NULL) AS unread_count
         FROM im_group_member gm JOIN im_chat_group g ON g.id = gm.group_id
         WHERE gm.user_id = #{userId}
         <if test="beforeId != null">AND g.id &lt; #{beforeId}</if>
@@ -67,6 +75,9 @@
     <delete id="deleteMessages">
         DELETE FROM im_group_message WHERE group_id = #{groupId}
     </delete>
+    <delete id="deleteRecalls">
+        DELETE FROM im_group_recall WHERE group_id = #{groupId}
+    </delete>
     <delete id="deleteMembers">
         DELETE FROM im_group_member WHERE group_id = #{groupId}
     </delete>
@@ -82,31 +93,44 @@
         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)
     </insert>
     <select id="byClientId" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at, recalled_at
         FROM im_group_message WHERE sender_id = #{senderId} AND client_msg_id = #{clientMsgId}
     </select>
     <select id="messageById" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at, recalled_at
         FROM im_group_message
         WHERE group_id = #{groupId} AND id = #{messageId} AND id &gt; #{joinedAfterId}
     </select>
+    <update id="recall">
+        UPDATE im_group_message SET body = '', recalled_at = CURRENT_TIMESTAMP(3)
+        WHERE group_id = #{groupId} AND id = #{messageId} AND sender_id = #{senderId}
+          AND recalled_at IS NULL AND created_at &gt;= CURRENT_TIMESTAMP(3) - INTERVAL 2 MINUTE
+    </update>
+    <insert id="addRecall">
+        INSERT INTO im_group_recall (group_id, message_id) VALUES (#{groupId}, #{messageId})
+    </insert>
+    <select id="recalls" resultMap="recall">
+        SELECT id, message_id, recalled_at FROM im_group_recall
+        WHERE group_id = #{groupId} AND message_id &gt; #{joinedAfterId} AND id &gt; #{afterId}
+        ORDER BY id ASC LIMIT #{limit}
+    </select>
     <select id="history" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at, recalled_at
         FROM im_group_message FORCE INDEX (idx_group_history)
         WHERE group_id = #{groupId} AND id &gt; #{joinedAfterId}
         <if test="beforeId != null">AND id &lt; #{beforeId}</if>
         ORDER BY id DESC LIMIT #{limit}
     </select>
     <select id="after" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at, recalled_at
         FROM im_group_message FORCE INDEX (idx_group_history)
         WHERE group_id = #{groupId} AND id &gt; GREATEST(#{joinedAfterId}, #{afterId})
         ORDER BY id ASC LIMIT #{limit}
     </select>
     <select id="search" resultMap="groupMessage">
-        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at
+        SELECT id, group_id, sender_id, client_msg_id, body, kind, created_at, recalled_at
         FROM im_group_message FORCE INDEX (idx_group_history)
-        WHERE group_id = #{groupId} AND id &gt; #{joinedAfterId}
+        WHERE group_id = #{groupId} AND id &gt; #{joinedAfterId} AND recalled_at IS NULL
           AND body LIKE CONCAT('%', #{pattern}, '%') ESCAPE '='
         <if test="beforeId != null">AND id &lt; #{beforeId}</if>
         ORDER BY id DESC LIMIT #{limit}

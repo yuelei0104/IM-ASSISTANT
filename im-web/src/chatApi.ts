@@ -7,20 +7,23 @@ export type DirectMessage = {
   clientMsgId: string;
   body: string;
   createdAt: string;
+  recalledAt: string | null;
 };
 export type MessagePage = { messages: DirectMessage[]; nextBeforeId: number | null };
 export type DirectSyncPage = { messages: DirectMessage[]; nextAfterId: number | null };
 export type UnreadCount = { peerId: number; unreadCount: number };
+export type MessageRecall = { id: number; messageId: number; recalledAt: string };
+export type RecallPage = { items: MessageRecall[]; nextAfterId: number | null };
 
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
-async function request<T>(path: string, body?: object): Promise<T> {
+async function request<T>(path: string, body?: object, method?: "DELETE"): Promise<T> {
   const token = sessionToken();
   if (!token) throw new ApiError("请先登录", 401);
   let response: Response;
   try {
     response = await fetch(`${apiBase}/chats/direct${path}`, {
-      method: body ? "POST" : "GET",
+      method: method || (body ? "POST" : "GET"),
       headers: {
         Authorization: `Bearer ${token}`,
         ...(body ? { "Content-Type": "application/json" } : {}),
@@ -62,6 +65,10 @@ export function searchDirectMessages(peerId: number, query: string, beforeId?: n
 export function sendDirectMessage(peerId: number, clientMsgId: string, body: string) {
   return request<DirectMessage>(`/${peerId}/messages`, { clientMsgId, body });
 }
+export const recallDirectMessage = (peerId: number, messageId: number) =>
+  request<void>(`/${peerId}/messages/${messageId}`, undefined, "DELETE");
+export const listDirectRecalls = (peerId: number, afterId: number) =>
+  request<RecallPage>(`/${peerId}/messages/recalls?afterId=${afterId}&limit=50`);
 
 export function listUnreadDirect() {
   return request<UnreadCount[]>("/unread");

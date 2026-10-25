@@ -1,6 +1,7 @@
 package com.yuelei.imchat.dao;
 
 import com.yuelei.imchat.model.DirectMessage;
+import com.yuelei.imchat.model.MessageRecall;
 import com.yuelei.imchat.model.UnreadCount;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -16,6 +17,12 @@ public interface MessageDao {
                @Param("clientMsgId") String clientMsgId, @Param("body") String body);
     int trackInbox(@Param("userId") long userId, @Param("peerId") long peerId);
     DirectMessage byClientId(@Param("senderId") long senderId, @Param("clientMsgId") String clientMsgId);
+    DirectMessage byId(@Param("messageId") long messageId);
+    int recall(@Param("messageId") long messageId, @Param("senderId") long senderId);
+    int addRecall(@Param("messageId") long messageId, @Param("low") long low,
+                  @Param("high") long high);
+    List<MessageRecall> recalls(@Param("low") long low, @Param("high") long high,
+                                @Param("afterId") long afterId, @Param("limit") int limit);
     List<DirectMessage> history(@Param("low") long low, @Param("high") long high,
                                 @Param("beforeId") Long beforeId, @Param("limit") int limit);
     List<DirectMessage> search(@Param("low") long low, @Param("high") long high,

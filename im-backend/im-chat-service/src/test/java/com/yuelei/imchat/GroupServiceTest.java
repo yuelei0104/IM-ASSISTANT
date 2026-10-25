@@ -75,6 +75,7 @@ class GroupServiceTest {
         ordered.verify(dao).memberIds(4);
         ordered.verify(notices).deleteForGroup(4);
         ordered.verify(summaries).deleteForGroup(4);
+        ordered.verify(dao).deleteRecalls(4);
         ordered.verify(dao).deleteMessages(4);
         ordered.verify(dao).deleteMembers(4);
         ordered.verify(dao).deleteGroup(4);
@@ -226,6 +227,45 @@ class GroupServiceTest {
         when(dao.byClientId(9, ID)).thenReturn(textMessage);
         assertThrows(ChatException.class, () -> service.send("Bearer t", 4, caption));
         verify(dao, never()).insertMessage(anyLong(), anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void recallRequiresCurrentMemberAndSenderAndRemovesMentionAndSummary() {
+        when(access.requireUser("Bearer owner")).thenReturn(9L);
+        when(access.requireUser("Bearer member")).thenReturn(10L);
+        when(dao.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "讨论", 9, 0));
+        var message = new GroupMessage(51, 4, 9, ID, "提醒内容", LocalDateTime.now());
+        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ChatException.class,
+                () -> service.recall("Bearer owner", 4, 51)).status());
+        when(dao.membership(4, 9)).thenReturn(new GroupDao.Membership(0, 0));
+        when(dao.membership(4, 10)).thenReturn(new GroupDao.Membership(0, 0));
+        when(dao.messageById(4, 51, 0)).thenReturn(message);
+        assertEquals(HttpStatus.NOT_FOUND, assertThrows(ChatException.class,
+                () -> service.recall("Bearer member", 4, 51)).status());
+        when(dao.recall(4, 51, 9)).thenReturn(1);
+        when(dao.memberIds(4)).thenReturn(List.of(9L, 10L));
+        when(notices.recipients(51)).thenReturn(List.of(10L));
+        service.recall("Bearer owner", 4, 51);
+        verify(dao).addRecall(4, 51);
+        verify(notices).deleteForMessage(51);
+        verify(summaries).deleteContaining(4, 51);
+        verify(events).publishEvent(new GroupEvent(4, 51, List.of(9L, 10L)));
+        verify(events).publishEvent(new MentionEvent(List.of(10L)));
+
+        when(dao.messageById(4, 51, 0)).thenReturn(new GroupMessage(51, 4, 9, ID, "", "TEXT",
+                message.createdAt(), LocalDateTime.now()));
+        service.recall("Bearer owner", 4, 51);
+        verify(dao, times(1)).addRecall(4, 51);
+    }
+
+    @Test
+    void recallFeedRejectsFormerMembersAndPrejoinMessages() {
+        when(access.requireUser("Bearer member")).thenReturn(10L);
+        assertEquals(HttpStatus.FORBIDDEN, assertThrows(ChatException.class,
+                () -> service.recalls("Bearer member", 4, 0, 50)).status());
+        when(dao.membership(4, 10)).thenReturn(new GroupDao.Membership(42, 42));
+        service.recalls("Bearer member", 4, 3, 50);
+        verify(dao).recalls(4, 42, 3, 51);
     }
     @Test
     void searchRequiresMembershipAndPassesJoinCursorToSql() {

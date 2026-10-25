@@ -12,4 +12,5 @@ public final class MessageDtos {
 
     public record Page(java.util.List<com.yuelei.imchat.model.DirectMessage> messages, Long nextBeforeId) { }
     public record SyncPage(java.util.List<com.yuelei.imchat.model.DirectMessage> messages, Long nextAfterId) { }
+    public record RecallPage(java.util.List<com.yuelei.imchat.model.MessageRecall> items, Long nextAfterId) { }
 }

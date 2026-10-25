@@ -17,6 +17,8 @@ export type Message = {
   kind: "text" | "voice" | "system";
   translation?: string;
   status?: "local" | "failed";
+  recalled?: boolean;
+  createdAt?: string;
 };
 
 export type Conversation = {

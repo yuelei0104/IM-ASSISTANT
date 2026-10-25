@@ -21,6 +21,11 @@
         FROM im_group_member
         WHERE group_id = #{groupId} AND user_id = #{requesterId}
           AND joined_after_id &lt; #{firstMessageId}
+          AND NOT EXISTS (
+            SELECT 1 FROM im_group_message m WHERE m.group_id = #{groupId}
+              AND m.recalled_at IS NOT NULL AND m.id IN
+              <foreach collection="messageIds" item="messageId" open="(" separator="," close=")">#{messageId}</foreach>
+          )
     </insert>
     <select id="visibleById" resultMap="summary">
         SELECT s.id, s.group_id, s.requester_id, s.first_message_id, s.last_message_id,
@@ -40,5 +45,10 @@
     </select>
     <delete id="deleteForGroup">
         DELETE FROM im_group_summary WHERE group_id = #{groupId}
+    </delete>
+    <delete id="deleteContaining">
+        DELETE FROM im_group_summary
+        WHERE group_id = #{groupId} AND first_message_id &lt;= #{messageId}
+          AND last_message_id &gt;= #{messageId}
     </delete>
 </mapper>

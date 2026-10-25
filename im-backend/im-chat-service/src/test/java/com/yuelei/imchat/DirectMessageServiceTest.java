@@ -5,6 +5,8 @@ import com.yuelei.imchat.dto.MessageDtos.Send;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.DirectMessage;
 import com.yuelei.imchat.model.UnreadCount;
+import com.yuelei.imchat.model.MessageRecall;
+import org.springframework.http.HttpStatus;
 import com.yuelei.imchat.service.DirectMessageService;
 import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
@@ -103,5 +105,39 @@ class DirectMessageServiceTest {
         assertThrows(ChatException.class, () -> service.search("Bearer t", 23, "关键词", null, 20));
         assertThrows(ChatException.class, () -> service.search("Bearer t", 9, "%", null, 20));
         verify(dao, times(1)).search(anyLong(), anyLong(), any(), any(), anyInt());
+    }
+
+    @Test
+    void recallChecksSenderAndTimeWindowAndPublishesTheTombstone() {
+        when(access.requireUser("Bearer t")).thenReturn(23L);
+        var sent = new DirectMessage(42, 23, 9, ID, "私密内容", LocalDateTime.now());
+        var tombstone = new DirectMessage(42, 23, 9, ID, "", sent.createdAt(), LocalDateTime.now());
+        when(dao.byId(42)).thenReturn(sent, tombstone, tombstone);
+        when(dao.recall(42, 23)).thenReturn(1);
+        service.recall("Bearer t", 9, 42);
+        service.recall("Bearer t", 9, 42);
+        verify(dao, times(1)).recall(42, 23);
+        verify(dao).addRecall(42, 9, 23);
+        verify(events).publishEvent(tombstone);
+
+        when(dao.byId(43)).thenReturn(new DirectMessage(43, 9, 23, ID, "别人发送", LocalDateTime.now()));
+        assertEquals(HttpStatus.NOT_FOUND, assertThrows(ChatException.class,
+                () -> service.recall("Bearer t", 9, 43)).status());
+        when(dao.byId(44)).thenReturn(new DirectMessage(44, 23, 9, ID, "超时", LocalDateTime.now().minusMinutes(3)));
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ChatException.class,
+                () -> service.recall("Bearer t", 9, 44)).status());
+        verify(dao, never()).addRecall(eq(44L), anyLong(), anyLong());
+    }
+
+    @Test
+    void recallFeedIsScopedToAuthenticatedPairAndPaginates() {
+        when(access.requireUser("Bearer t")).thenReturn(23L);
+        var first = new MessageRecall(8, 42, LocalDateTime.now());
+        var next = new MessageRecall(9, 43, LocalDateTime.now());
+        when(dao.recalls(9, 23, 5, 2)).thenReturn(List.of(first, next));
+        var page = service.recalls("Bearer t", 9, 5, 1);
+        assertEquals(List.of(first), page.items());
+        assertEquals(8L, page.nextAfterId());
+        assertThrows(ChatException.class, () -> service.recalls("Bearer t", 23, 0, 50));
     }
 }

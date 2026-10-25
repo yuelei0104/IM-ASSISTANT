@@ -7,6 +7,7 @@ import com.yuelei.imchat.model.GroupMessage;
 import com.yuelei.imchat.model.GroupSummary;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -27,22 +28,28 @@ public class GroupSummaryService {
         this.generator = generator;
     }
 
+    @Transactional
     public GroupSummary generate(String auth, long groupId) {
         long userId = access.requireUser(auth);
         var membership = member(groupId, userId);
         List<GroupMessage> messages = new ArrayList<>(groups.history(
                 groupId, membership.joinedAfterId(), null, 30));
+        messages.removeIf(message -> message.recalledAt() != null);
         if (messages.isEmpty()) throw new ChatException(HttpStatus.BAD_REQUEST, "群内还没有可总结的消息");
         Collections.reverse(messages);
         String content = generator.summarize(List.copyOf(messages));
         if (content == null || content.isBlank() || content.length() > 2000)
             throw new ChatException(HttpStatus.BAD_GATEWAY, "摘要内容无效");
+        // Serialize saving with recall and dissolution, which also lock this group.
+        if (groups.lockGroup(groupId) == null)
+            throw new ChatException(HttpStatus.NOT_FOUND, "讨论室不存在");
         // Recheck access after the slow model call, before saving anything.
         var current = member(groupId, userId);
         if (messages.get(0).id() <= current.joinedAfterId())
             throw new ChatException(HttpStatus.FORBIDDEN, "无权总结加入前的消息");
         var draft = new GroupSummaryDao.Draft(groupId, userId, messages.get(0).id(),
-                messages.get(messages.size() - 1).id(), content);
+                messages.get(messages.size() - 1).id(), content,
+                messages.stream().map(GroupMessage::id).toList());
         if (summaries.insert(draft) != 1)
             throw new ChatException(HttpStatus.FORBIDDEN, "无权总结加入前的消息");
         if (draft.getId() == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "摘要保存失败");

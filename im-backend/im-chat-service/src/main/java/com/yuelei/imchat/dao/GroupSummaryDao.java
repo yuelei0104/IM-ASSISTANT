@@ -15,14 +15,16 @@ public interface GroupSummaryDao {
         private final long firstMessageId;
         private final long lastMessageId;
         private final String content;
+        private final List<Long> messageIds;
 
         public Draft(long groupId, long requesterId, long firstMessageId,
-                     long lastMessageId, String content) {
+                     long lastMessageId, String content, List<Long> messageIds) {
             this.groupId = groupId;
             this.requesterId = requesterId;
             this.firstMessageId = firstMessageId;
             this.lastMessageId = lastMessageId;
             this.content = content;
+            this.messageIds = messageIds;
         }
         public Long getId() { return id; }
         public void setId(Long id) { this.id = id; }
@@ -31,6 +33,7 @@ public interface GroupSummaryDao {
         public long getFirstMessageId() { return firstMessageId; }
         public long getLastMessageId() { return lastMessageId; }
         public String getContent() { return content; }
+        public List<Long> getMessageIds() { return messageIds; }
     }
 
     int insert(Draft draft);
@@ -39,4 +42,5 @@ public interface GroupSummaryDao {
     List<GroupSummary> visibleList(@Param("groupId") long groupId,
                                    @Param("userId") long userId, @Param("limit") int limit);
     int deleteForGroup(@Param("groupId") long groupId);
+    int deleteContaining(@Param("groupId") long groupId, @Param("messageId") long messageId);
 }

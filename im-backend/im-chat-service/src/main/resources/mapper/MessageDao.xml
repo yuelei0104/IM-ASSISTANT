@@ -10,6 +10,14 @@
             <arg column="client_msg_id" javaType="java.lang.String"/>
             <arg column="body" javaType="java.lang.String"/>
             <arg column="created_at" javaType="java.time.LocalDateTime"/>
+            <arg column="recalled_at" javaType="java.time.LocalDateTime"/>
+        </constructor>
+    </resultMap>
+    <resultMap id="recall" type="com.yuelei.imchat.model.MessageRecall">
+        <constructor>
+            <idArg column="id" javaType="_long"/>
+            <arg column="message_id" javaType="_long"/>
+            <arg column="recalled_at" javaType="java.time.LocalDateTime"/>
         </constructor>
     </resultMap>
     <resultMap id="unreadCount" type="com.yuelei.imchat.model.UnreadCount">
@@ -36,11 +44,29 @@
         INSERT IGNORE INTO im_direct_inbox (user_id, peer_id) VALUES (#{userId}, #{peerId})
     </insert>
     <select id="byClientId" resultMap="message">
-        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at
+        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at, recalled_at
         FROM im_direct_message WHERE sender_id = #{senderId} AND client_msg_id = #{clientMsgId}
     </select>
+    <select id="byId" resultMap="message">
+        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at, recalled_at
+        FROM im_direct_message WHERE id = #{messageId}
+    </select>
+    <update id="recall">
+        UPDATE im_direct_message SET body = '', recalled_at = CURRENT_TIMESTAMP(3)
+        WHERE id = #{messageId} AND sender_id = #{senderId} AND recalled_at IS NULL
+          AND created_at &gt;= CURRENT_TIMESTAMP(3) - INTERVAL 2 MINUTE
+    </update>
+    <insert id="addRecall">
+        INSERT INTO im_direct_recall (message_id, user_low_id, user_high_id)
+        VALUES (#{messageId}, #{low}, #{high})
+    </insert>
+    <select id="recalls" resultMap="recall">
+        SELECT id, message_id, recalled_at FROM im_direct_recall
+        WHERE user_low_id = #{low} AND user_high_id = #{high} AND id &gt; #{afterId}
+        ORDER BY id ASC LIMIT #{limit}
+    </select>
     <select id="history" resultMap="message">
-        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at
+        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at, recalled_at
         FROM im_direct_message
         WHERE user_low_id = #{low} AND user_high_id = #{high}
         <if test="beforeId != null">AND id &lt; #{beforeId}</if>
@@ -48,17 +74,17 @@
         LIMIT #{limit}
     </select>
     <select id="after" resultMap="message">
-        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at
+        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at, recalled_at
         FROM im_direct_message FORCE INDEX (idx_direct_pair_history)
         WHERE user_low_id = #{low} AND user_high_id = #{high} AND id &gt; #{afterId}
         ORDER BY id ASC
         LIMIT #{limit}
     </select>
     <select id="search" resultMap="message">
-        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at
+        SELECT id, sender_id, recipient_id, client_msg_id, body, created_at, recalled_at
         FROM im_direct_message FORCE INDEX (idx_direct_pair_history)
         WHERE user_low_id = #{low} AND user_high_id = #{high}
-          AND body LIKE CONCAT('%', #{pattern}, '%') ESCAPE '='
+          AND recalled_at IS NULL AND body LIKE CONCAT('%', #{pattern}, '%') ESCAPE '='
         <if test="beforeId != null">AND id &lt; #{beforeId}</if>
         ORDER BY id DESC LIMIT #{limit}
     </select>
@@ -66,7 +92,7 @@
         SELECT i.peer_id,
                (SELECT COUNT(*) FROM im_direct_message m FORCE INDEX (idx_direct_unread)
                 WHERE m.recipient_id = i.user_id AND m.sender_id = i.peer_id
-                  AND m.id &gt; COALESCE(r.last_read_message_id, 0)) AS unread_count
+                  AND m.recalled_at IS NULL AND m.id &gt; COALESCE(r.last_read_message_id, 0)) AS unread_count
         FROM im_direct_inbox i
         LEFT JOIN im_direct_read r ON r.user_id = i.user_id AND r.peer_id = i.peer_id
         WHERE i.user_id = #{userId}
