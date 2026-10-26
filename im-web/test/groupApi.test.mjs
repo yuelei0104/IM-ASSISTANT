@@ -4,6 +4,7 @@ import {
   createGroupChat, inviteGroupMembers, leaveGroup, removeGroupMember, transferGroupOwner, dissolveGroup,
   listGroups, loadGroupMessages, recallGroupMessage, listGroupRecalls,
   markGroupRead, sendGroupMessage, syncGroupMessages,
+  translateGroupMessage,
   listGroupSummaries, generateGroupSummary, listGroupSummarySources,
 } from "../src/groupApi.ts";
 import { sessionKey } from "../src/authApi.ts";
@@ -35,6 +36,7 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   assert.deepEqual(await listGroupSummaries(4), []);
   await generateGroupSummary(4);
   assert.deepEqual(await listGroupSummarySources(4, 7), []);
+  await translateGroupMessage(4, 42, "en");
   assert.equal(calls[0].url, "/api/chats/groups?limit=50&beforeId=12");
   assert.deepEqual(JSON.parse(calls[1].options.body), { name: "讨论", friendIds: [2, 3] });
   assert.deepEqual(JSON.parse(calls[2].options.body), { friendIds: [5] });
@@ -60,6 +62,8 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   assert.equal(calls[13].options.method, "POST");
   assert.equal(calls[14].url, "/api/chats/groups/4/summaries/7/sources");
   assert.equal(calls[14].options.method, "GET");
+  assert.equal(calls[15].url, "/api/chats/groups/4/messages/42/translation");
+  assert.deepEqual(JSON.parse(calls[15].options.body), { targetLanguage: "en" });
 });
 
 test("group requests fail without a session before touching the network", async () => {
@@ -68,6 +72,7 @@ test("group requests fail without a session before touching the network", async 
   await assert.rejects(listGroups(), /请先登录/);
   await assert.rejects(generateGroupSummary(4), /请先登录/);
   await assert.rejects(listGroupSummarySources(4, 7), /请先登录/);
+  await assert.rejects(translateGroupMessage(4, 42, "zh"), /请先登录/);
   await assert.rejects(leaveGroup(4), /请先登录/);
   await assert.rejects(transferGroupOwner(4, 5), /请先登录/);
   await assert.rejects(dissolveGroup(4), /请先登录/);
