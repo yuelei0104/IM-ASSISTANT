@@ -4,7 +4,7 @@ import {
   createGroupChat, inviteGroupMembers, leaveGroup, removeGroupMember, transferGroupOwner, dissolveGroup,
   listGroups, loadGroupMessages, recallGroupMessage, listGroupRecalls,
   markGroupRead, sendGroupMessage, syncGroupMessages,
-  listGroupSummaries, generateGroupSummary,
+  listGroupSummaries, generateGroupSummary, listGroupSummarySources,
 } from "../src/groupApi.ts";
 import { sessionKey } from "../src/authApi.ts";
 
@@ -17,7 +17,7 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
     return options.method === "DELETE" || url.endsWith("/read")
       ? new Response(null, { status: 204 })
       : options.method === "GET"
-      ? Response.json(url.endsWith("/summaries") ? [] : url.includes("messages") ? { messages: [], nextBeforeId: null } : { items: [], nextBeforeId: null })
+      ? Response.json(url.includes("/summaries") ? [] : url.includes("messages") ? { messages: [], nextBeforeId: null } : { items: [], nextBeforeId: null })
       : Response.json({ id: 4 });
   };
   await listGroups(12);
@@ -34,6 +34,7 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   await markGroupRead(4, 34);
   assert.deepEqual(await listGroupSummaries(4), []);
   await generateGroupSummary(4);
+  assert.deepEqual(await listGroupSummarySources(4, 7), []);
   assert.equal(calls[0].url, "/api/chats/groups?limit=50&beforeId=12");
   assert.deepEqual(JSON.parse(calls[1].options.body), { name: "讨论", friendIds: [2, 3] });
   assert.deepEqual(JSON.parse(calls[2].options.body), { friendIds: [5] });
@@ -57,6 +58,8 @@ test("group requests use bearer auth, membership IDs, stable client ID and curso
   assert.equal(calls[12].url, "/api/chats/groups/4/summaries");
   assert.equal(calls[13].url, "/api/chats/groups/4/summaries");
   assert.equal(calls[13].options.method, "POST");
+  assert.equal(calls[14].url, "/api/chats/groups/4/summaries/7/sources");
+  assert.equal(calls[14].options.method, "GET");
 });
 
 test("group requests fail without a session before touching the network", async () => {
@@ -64,6 +67,7 @@ test("group requests fail without a session before touching the network", async 
   globalThis.fetch = () => { throw new Error("unexpected network request"); };
   await assert.rejects(listGroups(), /请先登录/);
   await assert.rejects(generateGroupSummary(4), /请先登录/);
+  await assert.rejects(listGroupSummarySources(4, 7), /请先登录/);
   await assert.rejects(leaveGroup(4), /请先登录/);
   await assert.rejects(transferGroupOwner(4, 5), /请先登录/);
   await assert.rejects(dissolveGroup(4), /请先登录/);

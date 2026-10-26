@@ -1,6 +1,7 @@
 package com.yuelei.imchat.controller;
 
 import com.yuelei.imchat.model.GroupSummary;
+import com.yuelei.imchat.model.SummarySource;
 import com.yuelei.imchat.service.GroupSummaryService;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -28,5 +29,13 @@ public class GroupSummaryController {
             @PathVariable long groupId) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .body(summaries.generate(auth, groupId));
+    }
+
+    @GetMapping("/{summaryId}/sources")
+    public ResponseEntity<List<SummarySource>> sources(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long groupId, @PathVariable long summaryId) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(summaries.sources(auth, groupId, summaryId));
     }
 }

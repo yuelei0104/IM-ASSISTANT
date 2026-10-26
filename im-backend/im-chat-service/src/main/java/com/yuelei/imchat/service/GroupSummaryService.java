@@ -5,6 +5,7 @@ import com.yuelei.imchat.dao.GroupSummaryDao;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.GroupMessage;
 import com.yuelei.imchat.model.GroupSummary;
+import com.yuelei.imchat.model.SummarySource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -62,6 +63,18 @@ public class GroupSummaryService {
         long userId = access.requireUser(auth);
         member(groupId, userId);
         return summaries.visibleList(groupId, userId, 20);
+    }
+
+    public List<SummarySource> sources(String auth, long groupId, long summaryId) {
+        long userId = access.requireUser(auth);
+        member(groupId, userId);
+        if (summaryId <= 0 || summaries.visibleById(summaryId, groupId, userId) == null)
+            throw new ChatException(HttpStatus.NOT_FOUND, "摘要不存在或不可查看");
+        // Repeat the membership and cursor checks in the source query: a member may
+        // leave, rejoin or recall a message between the two database reads.
+        var items = summaries.visibleSources(summaryId, groupId, userId);
+        if (items.isEmpty()) throw new ChatException(HttpStatus.NOT_FOUND, "摘要不存在或不可查看");
+        return items;
     }
 
     private GroupDao.Membership member(long groupId, long userId) {

@@ -5,6 +5,7 @@ import com.yuelei.imchat.dao.GroupSummaryDao;
 import com.yuelei.imchat.exception.ChatException;
 import com.yuelei.imchat.model.GroupMessage;
 import com.yuelei.imchat.model.GroupSummary;
+import com.yuelei.imchat.model.SummarySource;
 import com.yuelei.imchat.service.GroupSummaryService;
 import com.yuelei.imchat.service.SummaryGenerator;
 import com.yuelei.imchat.service.UserAccessClient;
@@ -127,5 +128,33 @@ class GroupSummaryServiceTest {
         assertThrows(ChatException.class, () -> service.generate("Bearer member", 4));
         verify(generator).summarize(List.of(live));
         verify(summaries).insert(argThat(draft -> draft.getMessageIds().equals(List.of(43L))));
+    }
+
+    @Test
+    void sourceMessagesRequireCurrentMembershipAndVisibleSummary() {
+        when(access.requireUser("Bearer outsider")).thenReturn(30L);
+        assertThrows(ChatException.class, () -> service.sources("Bearer outsider", 4, 7));
+        verify(summaries, never()).visibleSources(anyLong(), anyLong(), anyLong());
+
+        when(access.requireUser("Bearer member")).thenReturn(23L);
+        when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(50, 50));
+        assertThrows(ChatException.class, () -> service.sources("Bearer member", 4, 7));
+        verify(summaries).visibleById(7, 4, 23);
+        verify(summaries, never()).visibleSources(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void sourceQueryMustCheckMembershipAgainAfterSummaryLookup() {
+        when(access.requireUser("Bearer member")).thenReturn(23L);
+        when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
+        when(summaries.visibleById(7, 4, 23)).thenReturn(
+                new GroupSummary(7, 4, 23, 43, 51, "摘要", LocalDateTime.now()));
+        var row = new SummarySource(43, 9, "实际讨论内容", "CAPTION", LocalDateTime.now());
+        when(summaries.visibleSources(7, 4, 23)).thenReturn(List.of(row));
+        assertEquals(List.of(row), service.sources("Bearer member", 4, 7));
+
+        // Simulates a membership change or recall between the two SQL statements.
+        when(summaries.visibleSources(7, 4, 23)).thenReturn(List.of());
+        assertThrows(ChatException.class, () -> service.sources("Bearer member", 4, 7));
     }
 }

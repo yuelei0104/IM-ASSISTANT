@@ -1316,6 +1316,11 @@ svg {
 .task-edit-panel button { border: 0; border-radius: 7px; padding: 8px 12px;
   background: #e1f2f1; color: #267c80; font-weight: 700; cursor: pointer; }
 .task-overdue { color: #c15442; }
+.summary-evidence { margin: 9px 0 0; padding: 9px 11px; border-radius: 9px;
+  background: #f3f8f8; color: #425b62; font-size: 12px; }
+.summary-evidence-row { padding: 8px 0; border-top: 1px solid #dce9e9; }
+.summary-evidence-row small { color: #70878d; }
+.summary-evidence-row p { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .todo-row > .text-button { white-space: nowrap; }
 .todo-label {
   display: flex;

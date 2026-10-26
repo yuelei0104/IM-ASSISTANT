@@ -145,6 +145,12 @@ def main():
         summary = expect("generate pre-join summary",
                          call(args.chat_url, path + "/summaries", a, body={}, timeout=60), 200)
         summary_id = summary["id"]
+        source_path = path + f"/summaries/{summary_id}/sources"
+        owner_sources = expect("owner checks summary sources", call(args.chat_url, source_path, a), 200)
+        check([item["id"] for item in owner_sources] == [old_id]
+              and owner_sources[0]["body"] == old["body"],
+              "summary sources do not match the summarized caption")
+        expect("outsider cannot inspect summary sources", call(args.chat_url, source_path, c), 403)
 
     expect("invite newcomer", call(args.chat_url, path + "/members", a,
                                    {"friendIds": [newcomer]}), 200)
@@ -158,6 +164,13 @@ def main():
     listed = expect("newcomer summaries", call(args.chat_url, path + "/summaries", c), 200)
     check(summary_id is None or all(item["id"] != summary_id for item in listed),
           "newcomer can read a pre-join summary")
+    if summary_id is not None:
+        expect("newcomer cannot inspect pre-join summary sources",
+               call(args.chat_url, source_path, c), 404)
+        original_sources = expect("original member checks summary sources",
+                                  call(args.chat_url, source_path, b), 200)
+        check([item["id"] for item in original_sources] == [old_id],
+              "original member cannot verify summary against caption")
 
     new = expect("send post-join caption", call(args.chat_url, path + "/messages", a, {
         "clientMsgId": str(uuid.uuid4()), "body": "新成员可见的字幕",
@@ -182,6 +195,9 @@ def main():
            path + f"/members/{newcomer}", a, method="DELETE"), 204)
     expect("removed member cannot read history", call(args.chat_url, path + "/messages", c), 403)
     expect("removed member cannot read summaries", call(args.chat_url, path + "/summaries", c), 403)
+    if summary_id is not None:
+        expect("removed member cannot inspect summary sources",
+               call(args.chat_url, source_path, c), 403)
     removed_inbox = expect("removed member notices", call(args.chat_url, "/api/chats/notices", c), 200)
     check(not any(item["groupId"] == group_id for item in removed_inbox["items"])
           and removed_inbox["unreadCount"] == 0, "removed member can still read old mention")
