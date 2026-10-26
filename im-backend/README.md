@@ -368,8 +368,9 @@ membership, join cursor and message recall status before saving. It never
 generates or saves a task automatically. Task listings include the source IDs
 only while that person can still see the live group message; removal, leaving,
 re-invitation past the old message, recall and dissolution hide the link. The
-user-confirmed title remains a private note after those changes, and the task
-does not hold a copy of the source message body. The browser rechecks access
+user-confirmed title remains a private note after those changes; it may contain
+text the user explicitly chose to copy from the message. Source message bodies
+are not stored as a separate task field. The browser rechecks access
 when the user clicks **查看来源**. This works while Ollama is downloading:
 
 ```powershell

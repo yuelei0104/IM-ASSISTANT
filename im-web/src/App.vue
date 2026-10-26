@@ -1924,8 +1924,11 @@ async function openTaskSource(task: PersonalTask) {
     if (currentAccount.value?.id !== accountId) return;
     if (target.recalledAt) throw new Error("来源消息已撤回");
     const id = `server-group-${task.sourceGroupId}`;
-    if (!serverGroups.value.some((group) => group.id === task.sourceGroupId)) await refreshGroups();
-    if (!serverGroups.value.some((group) => group.id === task.sourceGroupId)) throw new Error("已无权查看来源讨论室");
+    if (!serverGroups.value.some((group) => group.id === task.sourceGroupId)) {
+      const group = await getGroup(task.sourceGroupId);
+      if (currentAccount.value?.id !== accountId) return;
+      serverGroups.value = [...serverGroups.value, group].sort((a, b) => b.id - a.id);
+    }
     openChat(id);
     if (activeId.value !== id) return;
     await nextTick();
