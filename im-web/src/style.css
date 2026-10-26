@@ -1306,6 +1306,16 @@ svg {
   color: #536770;
   font-size: 12px;
 }
+.task-date-field { display: inline-flex; align-items: center; gap: 9px; margin: 0 0 14px;
+  color: #536770; font-size: 12px; }
+.task-date-field input, .task-edit-panel input { border: 1px solid #d9e5e5; border-radius: 7px;
+  background: white; padding: 7px 9px; color: #30454b; }
+.task-edit-panel { display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 12px; margin: 8px 0 15px; background: #f6f9f9; border-radius: 10px; }
+.task-edit-panel label { display: inline-flex; align-items: center; gap: 7px; color: #536770; font-size: 12px; }
+.task-edit-panel button { border: 0; border-radius: 7px; padding: 8px 12px;
+  background: #e1f2f1; color: #267c80; font-weight: 700; cursor: pointer; }
+.task-overdue { color: #c15442; }
 .todo-row > .text-button { white-space: nowrap; }
 .todo-label {
   display: flex;

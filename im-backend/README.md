@@ -378,6 +378,19 @@ Set-Location D:\im-assistant\im-backend
 python .\tools\message_task_probe.py
 ```
 
+Flyway V13 adds an optional `due_date` to personal tasks. Create accepts an ISO
+date such as `"dueDate": "2026-11-30"`; `PUT /api/chats/tasks/{id}/details`
+accepts `{ "title": "确认上线时间", "dueDate": null }` to edit the title and
+clear the date. Updates use the signed-in owner's ID in the SQL WHERE clause;
+other accounts receive 404. Dates are calendar dates in the user's browser,
+and overdue status is shown in the task list without background reminders.
+After restarting chat-service on the updated code, check with:
+
+```powershell
+Set-Location D:\im-assistant\im-backend
+python .\tools\task_due_date_probe.py
+```
+
 ## Optional local gateway
 
 `im-gateway` is a runnable Spring Cloud Gateway on `127.0.0.1:8080`. It routes

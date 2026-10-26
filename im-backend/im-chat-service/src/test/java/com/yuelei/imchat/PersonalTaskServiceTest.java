@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -34,9 +35,9 @@ class PersonalTaskServiceTest {
             captor.getValue().setId(7L);
             return 1;
         });
-        var row = new PersonalTask(7, "任务", false, LocalDateTime.now(), null, null);
+        var row = new PersonalTask(7, "任务", false, LocalDateTime.now(), null, null, null);
         when(dao.owned(10, 7)).thenReturn(row);
-        assertEquals(row, service.create("Bearer a", " 任务 ", null, null));
+        assertEquals(row, service.create("Bearer a", " 任务 ", null, null, null));
         assertEquals(10, captor.getValue().getOwnerId());
         assertEquals("任务", captor.getValue().getTitle());
         assertNull(captor.getValue().getSourceGroupId());
@@ -61,15 +62,15 @@ class PersonalTaskServiceTest {
     void groupSourceRequiresCurrentMembershipVisibleAndLiveMessage() {
         when(access.requireUser("Bearer a")).thenReturn(10L);
         when(groups.lockGroup(4)).thenReturn(new GroupDao.GroupRow(4, "项目", 9, 0));
-        assertThrows(ChatException.class, () -> service.create("Bearer a", "任务", 4L, 8L));
+        assertThrows(ChatException.class, () -> service.create("Bearer a", "任务", 4L, 8L, null));
         verify(dao, never()).insert(any());
 
         when(groups.membership(4, 10)).thenReturn(new GroupDao.Membership(9, 9));
-        assertThrows(ChatException.class, () -> service.create("Bearer a", "任务", 4L, 8L));
+        assertThrows(ChatException.class, () -> service.create("Bearer a", "任务", 4L, 8L, null));
         verify(groups).messageById(4, 8, 9);
         verify(dao, never()).insert(any());
 
-        assertThrows(ChatException.class, () -> service.create("Bearer a", "任务", 4L, null));
+        assertThrows(ChatException.class, () -> service.create("Bearer a", "任务", 4L, null, null));
         verify(dao, never()).insert(any());
     }
 
@@ -85,11 +86,25 @@ class PersonalTaskServiceTest {
             draft.getValue().setId(7L);
             return 1;
         });
-        var saved = new PersonalTask(7, "用户确认的标题", false, LocalDateTime.now(), 4L, 8L);
+        var saved = new PersonalTask(7, "用户确认的标题", false, LocalDateTime.now(), 4L, 8L, null);
         when(dao.owned(10, 7)).thenReturn(saved);
-        assertEquals(saved, service.create("Bearer a", " 用户确认的标题 ", 4L, 8L));
+        assertEquals(saved, service.create("Bearer a", " 用户确认的标题 ", 4L, 8L, null));
         assertEquals("用户确认的标题", draft.getValue().getTitle());
         assertEquals(4L, draft.getValue().getSourceGroupId());
         assertEquals(8L, draft.getValue().getSourceMessageId());
+    }
+
+    @Test
+    void detailsUpdateIsAtomicAndOwnerScoped() {
+        when(access.requireUser("Bearer a")).thenReturn(10L);
+        LocalDate date = LocalDate.of(2026, 11, 2);
+        var row = new PersonalTask(7, "改后的标题", false, LocalDateTime.now(), null, null, date);
+        when(dao.updateDetails(10, 7, "改后的标题", date)).thenReturn(1);
+        when(dao.owned(10, 7)).thenReturn(row);
+        assertEquals(row, service.updateDetails("Bearer a", 7, " 改后的标题 ", date));
+        assertThrows(ChatException.class, () -> service.updateDetails("Bearer a", 7, "  ", date));
+        assertThrows(ChatException.class, () -> service.updateDetails("Bearer a", 8, "其他人的", date));
+        verify(dao).updateDetails(10, 8, "其他人的", date);
+        verify(dao, never()).updateDetails(eq(20L), anyLong(), anyString(), any());
     }
 }
