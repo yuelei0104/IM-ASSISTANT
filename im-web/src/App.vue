@@ -50,7 +50,7 @@ import {
   recallGroupMessage, listGroupRecalls,
   listGroups, loadGroupMessages,
   markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages, listGroupSummaries, generateGroupSummary,
-  type GroupChat, type GroupMessage, type GroupSummary,
+  listGroupSummarySources, type GroupChat, type GroupMessage, type GroupSummary, type SummarySource,
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, getAlertKeywords, saveAlertKeywords, type MentionNotice } from "./noticeApi";
 import { listTasks, createTask, updateTaskDetails, completeTask, deleteTask, type PersonalTask, type TaskSource } from "./taskApi";
@@ -218,6 +218,11 @@ const directRecalled = new Map<number, string>();
 const groupRecalled = new Map<number, string>();
 const recallingMessageId = ref<string | null>(null);
 const groupSummaries = ref<GroupSummary[]>([]);
+const summaryEvidenceFor = ref<number | null>(null);
+const summaryEvidence = ref<SummarySource[]>([]);
+const summaryEvidenceBusy = ref(false);
+const summaryEvidenceError = ref("");
+let summaryEvidenceSeq = 0;
 const summaryBusy = ref(false);
 const summaryError = ref("");
 let summarySeq = 0;
@@ -317,6 +322,7 @@ watch(activeId, () => {
   mentionSelections.value = {};
   showSummary.value = false;
   groupSummaries.value = [];
+  clearSummaryEvidence();
   summaryBusy.value = false;
   summaryError.value = "";
   summarySeq++;
@@ -458,6 +464,41 @@ const summarySources = computed(() =>
     .filter((m) => m.kind !== "system" && !m.recalled && m.senderId !== selfId)
     .slice(-3),
 );
+function clearSummaryEvidence() {
+  summaryEvidenceSeq++;
+  summaryEvidenceFor.value = null;
+  summaryEvidence.value = [];
+  summaryEvidenceBusy.value = false;
+  summaryEvidenceError.value = "";
+}
+async function toggleSummaryEvidence(summaryId: number) {
+  if (summaryEvidenceFor.value === summaryId) {
+    clearSummaryEvidence();
+    return;
+  }
+  const groupId = serverGroupId(activeId.value);
+  const accountId = currentAccount.value?.id;
+  if (!groupId || !accountId) return;
+  const sequence = ++summaryEvidenceSeq;
+  summaryEvidenceFor.value = summaryId;
+  summaryEvidence.value = [];
+  summaryEvidenceError.value = "";
+  summaryEvidenceBusy.value = true;
+  try {
+    const items = await listGroupSummarySources(groupId, summaryId);
+    if (sequence !== summaryEvidenceSeq || currentAccount.value?.id !== accountId
+        || serverGroupId(activeId.value) !== groupId) return;
+    summaryEvidence.value = items;
+  } catch (error) {
+    if (sequence === summaryEvidenceSeq && currentAccount.value?.id === accountId) {
+      summaryEvidenceError.value = error instanceof Error ? error.message : "无法查看摘要依据";
+      // A recalled message or changed membership may invalidate the summary.
+      void loadGroupSummaries();
+    }
+  } finally {
+    if (sequence === summaryEvidenceSeq) summaryEvidenceBusy.value = false;
+  }
+}
 async function loadGroupSummaries() {
   const groupId = serverGroupId(activeId.value);
   const accountId = currentAccount.value?.id;
@@ -470,6 +511,8 @@ async function loadGroupSummaries() {
     if (sequence !== summarySeq || currentAccount.value?.id !== accountId
         || serverGroupId(activeId.value) !== groupId) return;
     groupSummaries.value = items;
+    if (summaryEvidenceFor.value !== null && !items.some((item) => item.id === summaryEvidenceFor.value))
+      clearSummaryEvidence();
     showSummary.value = true;
   } catch (error) {
     if (sequence === summarySeq)
@@ -743,6 +786,7 @@ function forgetGroup(groupId: number) {
     groupRecallCursor.value = 0;
     groupRecalled.clear();
     groupSummaries.value = [];
+    clearSummaryEvidence();
     groupSyncCursor.value = null;
     groupNextBeforeId.value = null;
     groupPendingSend = null;
@@ -806,6 +850,7 @@ function applyGroupRecall(recall: MessageRecall) {
   summarySeq++;
   summaryBusy.value = false;
   groupSummaries.value = [];
+  clearSummaryEvidence();
 }
 async function syncGroupRecalls(groupId: number, accountId: number, sequence: number) {
   let changed = false;
@@ -1109,6 +1154,7 @@ function applyAccount(account: Account) {
   directRecalled.clear();
   groupRecalled.clear();
   groupSummaries.value = [];
+  clearSummaryEvidence();
   summaryBusy.value = false;
   summaryError.value = "";
   summarySeq++;
@@ -1374,6 +1420,7 @@ async function signOut() {
   directRecalled.clear();
   groupRecalled.clear();
   groupSummaries.value = [];
+  clearSummaryEvidence();
   summaryBusy.value = false;
   summaryError.value = "";
   summarySeq++;
@@ -3060,6 +3107,23 @@ onBeforeUnmount(() => {
                   <small>消息 {{ item.firstMessageId }}–{{ item.lastMessageId }} ·
                     {{ new Date(item.createdAt).toLocaleString("zh-CN") }}</small>
                   <p class="group-summary-text">{{ item.content }}</p>
+                  <button type="button" class="text-button" :aria-expanded="summaryEvidenceFor === item.id"
+                    :aria-label="`核对摘要 ${item.id} 的原文`" @click="toggleSummaryEvidence(item.id)">
+                    {{ summaryEvidenceFor === item.id ? "收起原文" : "核对原文" }}
+                  </button>
+                  <div v-if="summaryEvidenceFor === item.id" class="summary-evidence">
+                    <p v-if="summaryEvidenceBusy">正在加载原文…</p>
+                    <p v-else-if="summaryEvidenceError" role="alert">{{ summaryEvidenceError }}</p>
+                    <template v-else>
+                      <p>生成时覆盖的可见消息（最多 30 条），请对照检查结论和待办。</p>
+                      <div v-for="source in summaryEvidence" :key="source.id" class="summary-evidence-row">
+                        <small>消息 {{ source.id }} · 用户 {{ source.senderId }} ·
+                          {{ new Date(source.createdAt).toLocaleString("zh-CN") }} ·
+                          {{ source.kind === "CAPTION" ? "字幕" : "文字" }}</small>
+                        <p>{{ source.body }}</p>
+                      </div>
+                    </template>
+                  </div>
                 </article>
               </div>
             </template>

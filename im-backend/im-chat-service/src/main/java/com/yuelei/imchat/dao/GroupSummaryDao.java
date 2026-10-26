@@ -1,6 +1,7 @@
 package com.yuelei.imchat.dao;
 
 import com.yuelei.imchat.model.GroupSummary;
+import com.yuelei.imchat.model.SummarySource;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -41,6 +42,8 @@ public interface GroupSummaryDao {
                              @Param("userId") long userId);
     List<GroupSummary> visibleList(@Param("groupId") long groupId,
                                    @Param("userId") long userId, @Param("limit") int limit);
+    List<SummarySource> visibleSources(@Param("id") long id, @Param("groupId") long groupId,
+                                       @Param("userId") long userId);
     int deleteForGroup(@Param("groupId") long groupId);
     int deleteContaining(@Param("groupId") long groupId, @Param("messageId") long messageId);
 }

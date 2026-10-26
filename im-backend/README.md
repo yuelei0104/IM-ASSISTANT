@@ -350,6 +350,18 @@ member's latest 30 eligible messages (each capped at 500 characters) to that
 local endpoint; model failures return a generic error without message text.
 Ensure the selected model runs locally rather than using Ollama cloud models.
 
+To check a generated summary against its inputs, a current group member can
+request `GET /api/chats/groups/{groupId}/summaries/{summaryId}/sources`.
+It returns up to 30 source messages in chronological order, with no-cache
+headers and no client message IDs. SQL verifies current group membership,
+the summary's first-message join cursor and each message's live status on
+every read. A member who joined after the summary receives 404; outsiders
+receive 403. The web view offers **核对原文**, showing the messages next to the
+summary for human review. This lets people spot omissions or unsupported
+claims; it does not automatically certify the model's accuracy. Run
+`python .\tools\group_privacy_probe.py --check-summary` with a local model
+after restarting chat-service to verify source visibility as well.
+
 ### Personal tasks
 
 Chat Flyway V8 creates `im_personal_task`. `GET /api/chats/tasks?limit=50&beforeId=123`

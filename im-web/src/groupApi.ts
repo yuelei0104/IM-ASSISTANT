@@ -30,6 +30,13 @@ export type GroupSummary = {
   content: string;
   createdAt: string;
 };
+export type SummarySource = {
+  id: number;
+  senderId: number;
+  body: string;
+  kind: "TEXT" | "CAPTION";
+  createdAt: string;
+};
 export type GroupsPage = { items: GroupChat[]; nextBeforeId: number | null };
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
@@ -89,3 +96,5 @@ export const listGroupSummaries = (id: number) =>
   request<GroupSummary[]>(`/${id}/summaries`);
 export const generateGroupSummary = (id: number) =>
   request<GroupSummary>(`/${id}/summaries`, {});
+export const listGroupSummarySources = (id: number, summaryId: number) =>
+  request<SummarySource[]>(`/${id}/summaries/${summaryId}/sources`);
