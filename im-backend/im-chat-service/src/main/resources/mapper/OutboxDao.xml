@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.yuelei.imchat.dao.OutboxDao">
+    <resultMap id="row" type="com.yuelei.imchat.model.OutboxRow">
+        <id column="id" property="id"/>
+        <result column="event_key" property="eventKey"/>
+        <result column="payload" property="payload"/>
+    </resultMap>
+
+    <insert id="insert">
+        INSERT INTO im_notification_outbox(event_key, payload)
+        VALUES (#{eventKey}, #{payload})
+    </insert>
+
+    <!-- A session-scoped MySQL advisory lock serializes all nodes' outbox relays. -->
+    <select id="tryLock" resultType="java.lang.Integer">
+        SELECT GET_LOCK('im_chat_outbox_v1', 0)
+    </select>
+    <select id="releaseLock" resultType="java.lang.Integer">
+        SELECT RELEASE_LOCK('im_chat_outbox_v1')
+    </select>
+    <select id="pending" resultMap="row">
+        SELECT id, event_key, payload FROM im_notification_outbox
+        WHERE published_at IS NULL ORDER BY id LIMIT #{limit}
+    </select>
+    <update id="markPublished">
+        UPDATE im_notification_outbox SET published_at = CURRENT_TIMESTAMP(3)
+        WHERE id = #{id} AND published_at IS NULL
+    </update>
+    <delete id="deletePublished">
+        DELETE FROM im_notification_outbox
+        WHERE published_at &lt; CURRENT_TIMESTAMP(3) - INTERVAL 7 DAY
+        ORDER BY id LIMIT #{limit}
+    </delete>
+</mapper>
