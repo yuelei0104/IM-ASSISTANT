@@ -18,7 +18,7 @@ public class PersonalTaskController {
 
     public PersonalTaskController(PersonalTaskService tasks) { this.tasks = tasks; }
 
-    public record Create(@NotBlank @Size(max = 100) String title) { }
+    public record Create(@NotBlank @Size(max = 100) String title, Long sourceGroupId, Long sourceMessageId) { }
     public record Complete(@NotNull Boolean completed) { }
 
     @GetMapping
@@ -34,7 +34,7 @@ public class PersonalTaskController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @Valid @RequestBody Create request) {
         return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore())
-                .body(tasks.create(auth, request.title()));
+                .body(tasks.create(auth, request.title(), request.sourceGroupId(), request.sourceMessageId()));
     }
 
     @PatchMapping("/{id}")

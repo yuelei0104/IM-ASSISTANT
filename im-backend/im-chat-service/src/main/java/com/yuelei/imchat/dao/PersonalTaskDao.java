@@ -12,15 +12,21 @@ public interface PersonalTaskDao {
         private Long id;
         private final long ownerId;
         private final String title;
+        private final Long sourceGroupId;
+        private final Long sourceMessageId;
 
-        public Draft(long ownerId, String title) {
+        public Draft(long ownerId, String title, Long sourceGroupId, Long sourceMessageId) {
             this.ownerId = ownerId;
             this.title = title;
+            this.sourceGroupId = sourceGroupId;
+            this.sourceMessageId = sourceMessageId;
         }
         public Long getId() { return id; }
         public void setId(Long id) { this.id = id; }
         public long getOwnerId() { return ownerId; }
         public String getTitle() { return title; }
+        public Long getSourceGroupId() { return sourceGroupId; }
+        public Long getSourceMessageId() { return sourceMessageId; }
     }
 
     int insert(Draft draft);

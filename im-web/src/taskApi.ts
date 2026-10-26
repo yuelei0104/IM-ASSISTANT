@@ -5,6 +5,8 @@ export type PersonalTask = {
   title: string;
   completed: boolean;
   createdAt: string;
+  sourceGroupId: number | null;
+  sourceMessageId: number | null;
 };
 export type TaskPage = {
   items: PersonalTask[];
@@ -41,7 +43,9 @@ async function request<T>(path: string, method = "GET", body?: object): Promise<
 
 export const listTasks = (beforeId?: number) =>
   request<TaskPage>(`?limit=50${beforeId ? `&beforeId=${beforeId}` : ""}`);
-export const createTask = (title: string) => request<PersonalTask>("", "POST", { title });
+export type TaskSource = { sourceGroupId: number; sourceMessageId: number };
+export const createTask = (title: string, source?: TaskSource) =>
+  request<PersonalTask>("", "POST", { title, ...(source || {}) });
 export const completeTask = (id: number, completed: boolean) =>
   request<PersonalTask>(`/${id}`, "PATCH", { completed });
 export const deleteTask = (id: number) => request<void>(`/${id}`, "DELETE");

@@ -8,21 +8,35 @@
             <arg column="title" javaType="java.lang.String"/>
             <arg column="completed" javaType="_boolean"/>
             <arg column="created_at" javaType="java.time.LocalDateTime"/>
+            <arg column="source_group_id" javaType="java.lang.Long"/>
+            <arg column="source_message_id" javaType="java.lang.Long"/>
         </constructor>
     </resultMap>
     <insert id="insert" parameterType="com.yuelei.imchat.dao.PersonalTaskDao$Draft"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO im_personal_task (owner_id, title) VALUES (#{ownerId}, #{title})
+        INSERT INTO im_personal_task (owner_id, title, source_group_id, source_message_id)
+        VALUES (#{ownerId}, #{title}, #{sourceGroupId,jdbcType=BIGINT}, #{sourceMessageId,jdbcType=BIGINT})
     </insert>
+    <sql id="visibleTask">
+        SELECT t.id, t.title, t.completed, t.created_at,
+               CASE WHEN gm.id IS NOT NULL THEN t.source_group_id END AS source_group_id,
+               CASE WHEN gm.id IS NOT NULL THEN t.source_message_id END AS source_message_id
+        FROM im_personal_task t
+        LEFT JOIN im_group_member membership
+          ON membership.group_id = t.source_group_id AND membership.user_id = #{ownerId}
+        LEFT JOIN im_group_message gm
+          ON gm.id = t.source_message_id AND gm.group_id = t.source_group_id
+         AND gm.id &gt; membership.joined_after_id AND gm.recalled_at IS NULL
+    </sql>
     <select id="owned" resultMap="task">
-        SELECT id, title, completed, created_at FROM im_personal_task
-        WHERE owner_id = #{ownerId} AND id = #{id}
+        <include refid="visibleTask"/>
+        WHERE t.owner_id = #{ownerId} AND t.id = #{id}
     </select>
     <select id="list" resultMap="task">
-        SELECT id, title, completed, created_at FROM im_personal_task
-        WHERE owner_id = #{ownerId}
-        <if test="beforeId != null">AND id &lt; #{beforeId}</if>
-        ORDER BY id DESC LIMIT #{limit}
+        <include refid="visibleTask"/>
+        WHERE t.owner_id = #{ownerId}
+        <if test="beforeId != null">AND t.id &lt; #{beforeId}</if>
+        ORDER BY t.id DESC LIMIT #{limit}
     </select>
     <select id="countOpen" resultType="long">
         SELECT COUNT(*) FROM im_personal_task WHERE owner_id = #{ownerId} AND completed = FALSE
