@@ -480,6 +480,76 @@ loopback browser origins on any local port, so Vite can choose the next free
 port. These services still bind to 127.0.0.1 for local development.
 
 Without that environment variable Vite continues proxying straight to 8081
-and 8082. The gateway currently has static local targets, not service discovery
-or cluster-aware WebSocket routing. Both the gateway and backend ports are for
-loopback development; do not expose this setup to the public internet.
+and 8082. The default gateway profile has static single-node targets; the
+optional local cluster profile below uses two fixed discovery instances. Both
+profiles bind to loopback; do not expose this setup to the public internet.
+
+### Two-node chat cluster (opt-in local profile)
+
+The default gateway profile above remains a single-node route. To exercise two
+chat nodes, start a single user-service on 8081 and two copies of the same
+chat-service jar on 8082 and 8083. They must share the **same MySQL database
+and Redis**. Each node keeps only its own authenticated WebSocket sessions;
+after a database commit, Redis Pub/Sub carries ID-only notifications to both
+nodes. A client always fetches the real message through authenticated HTTP.
+Pub/Sub is best-effort, so reconnection synchronizes missing messages from
+MySQL by cursor. There is no separate Redis user-to-node routing table.
+
+Build once from `D:\im-assistant\im-backend`:
+
+```powershell
+.\mvnw.cmd -pl im-chat-service,im-gateway -am package
+```
+
+Open **two separate** PowerShell windows in this directory. In each one run
+`$env:IM_MYSQL_PASSWORD = Read-Host 'IM_MYSQL_PASSWORD from .env'`, then run one
+of these commands per window:
+
+```powershell
+java -jar .\im-chat-service\target\im-chat-service-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev --server.port=8082
+```
+
+```powershell
+java -jar .\im-chat-service\target\im-chat-service-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev --server.port=8083
+```
+
+Stop the old gateway on 8080 if it is running. Start the new gateway jar in a
+third window with its `cluster` profile:
+
+```powershell
+java -jar .\im-gateway\target\im-gateway-0.0.1-SNAPSHOT.jar --spring.profiles.active=cluster
+```
+
+This profile registers the two loopback chat instances with Spring Cloud's
+simple discovery client. The gateway load-balances both HTTP and WebSocket
+handshakes and health-checks `/actuator/health` every five seconds. The
+WebSocket stays attached to its chosen node for the life of that connection;
+HTTP requests may use either node because they share MySQL. No write request
+is automatically retried by the gateway. You can override the instance URIs
+using `IM_CHAT_NODE_A_URL` and `IM_CHAT_NODE_B_URL` on the gateway process;
+keep them on loopback in this local setup. Point Vite at the gateway with
+`$env:VITE_IM_GATEWAY_URL = 'http://127.0.0.1:8080'` before `npm run dev`.
+
+With both chat nodes up and user-service in `dev` mode, run from the backend
+directory:
+
+```powershell
+python .\tools\cluster_probe.py
+```
+
+The probe opens authenticated sockets on both nodes and the gateway, sends
+in both directions, then verifies that MySQL sync recovers a message sent
+while a socket was disconnected. It creates two disposable accounts and three
+messages. For a gateway failover check, stop **one** chat process with Ctrl+C,
+leave the other running, wait at least ten seconds for the health-check cycle,
+and run:
+
+```powershell
+python .\tools\cluster_probe.py --gateway-only
+```
+
+This verifies repeated HTTP requests and a fresh authenticated WebSocket
+through the surviving node. Restart the stopped node after the check. Existing
+connections on a stopped process necessarily close; the browser reconnects
+and fetches missed data. This profile is a local two-node demonstration, not
+a production service registry or an exactly-once push guarantee.
