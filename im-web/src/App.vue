@@ -53,7 +53,7 @@ import {
   type GroupChat, type GroupMessage, type GroupSummary,
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, getAlertKeywords, saveAlertKeywords, type MentionNotice } from "./noticeApi";
-import { listTasks, createTask, completeTask, deleteTask, type PersonalTask, type TaskSource } from "./taskApi";
+import { listTasks, createTask, updateTaskDetails, completeTask, deleteTask, type PersonalTask, type TaskSource } from "./taskApi";
 import { syncForward } from "./incrementalSync";
 import { resumeCursor, savedCursor, saveCursor } from "./syncCursor";
 import {
@@ -181,7 +181,11 @@ const toast = ref("");
 const range = ref<"recent" | "all">("recent");
 const showSummary = ref(false);
 const taskDraft = ref("");
+const taskDraftDueDate = ref("");
 const taskSource = ref<TaskSource | null>(null);
+const editingTaskId = ref<number | null>(null);
+const editingTaskTitle = ref("");
+const editingTaskDueDate = ref("");
 const personalTasks = ref<PersonalTask[]>([]);
 const taskNextBeforeId = ref<number | null>(null);
 const taskOpenCount = ref(0);
@@ -1117,6 +1121,8 @@ function applyAccount(account: Account) {
   taskSaving.value = false;
   taskError.value = "";
   taskSource.value = null;
+  taskDraftDueDate.value = "";
+  editingTaskId.value = null;
   directSyncCursor.value = null;
   groupSyncCursor.value = null;
   serverGroups.value = [];
@@ -1380,6 +1386,8 @@ async function signOut() {
   taskSaving.value = false;
   taskError.value = "";
   taskSource.value = null;
+  taskDraftDueDate.value = "";
+  editingTaskId.value = null;
   directSyncCursor.value = null;
   groupSyncCursor.value = null;
   serverGroups.value = [];
@@ -1949,11 +1957,12 @@ async function addTask() {
   taskError.value = "";
   let savedOk = false;
   try {
-    const saved = await createTask(title, taskSource.value || undefined);
+    const saved = await createTask(title, taskSource.value || undefined, taskDraftDueDate.value || undefined);
     if (sequence !== taskSeq || currentAccount.value?.id !== accountId) return;
     personalTasks.value.unshift(saved);
     taskOpenCount.value++;
     taskDraft.value = "";
+    taskDraftDueDate.value = "";
     taskSource.value = null;
     page.value = "tasks";
     savedOk = true;
@@ -1966,6 +1975,34 @@ async function addTask() {
       taskSaving.value = false;
       if (savedOk) void refreshTasks();
     }
+  }
+}
+function startTaskEdit(task: PersonalTask) {
+  if (taskSaving.value) return;
+  editingTaskId.value = task.id;
+  editingTaskTitle.value = task.title;
+  editingTaskDueDate.value = task.dueDate || "";
+  taskError.value = "";
+}
+async function saveTaskEdit() {
+  const task = personalTasks.value.find((item) => item.id === editingTaskId.value);
+  const accountId = currentAccount.value?.id;
+  const title = editingTaskTitle.value.trim();
+  if (!accountId || !task || !title || title.length > 100 || taskSaving.value) return;
+  taskSaving.value = true;
+  const sequence = ++taskSeq;
+  taskLoading.value = false;
+  taskError.value = "";
+  try {
+    const saved = await updateTaskDetails(task.id, title, editingTaskDueDate.value || null);
+    if (sequence !== taskSeq || currentAccount.value?.id !== accountId) return;
+    personalTasks.value = personalTasks.value.map((item) => item.id === saved.id ? saved : item);
+    editingTaskId.value = null;
+  } catch (error) {
+    if (sequence === taskSeq && currentAccount.value?.id === accountId)
+      taskError.value = error instanceof Error ? error.message : "待办编辑失败";
+  } finally {
+    if (sequence === taskSeq && currentAccount.value?.id === accountId) taskSaving.value = false;
   }
 }
 async function toggleTask(task: PersonalTask) {
@@ -3374,11 +3411,11 @@ onBeforeUnmount(() => {
             来源：讨论室消息。请编辑标题并确认保存，仅自己可见。
             <button type="button" class="text-button" @click="taskSource = null">取消关联来源</button>
           </p>
-          <div
-            v-for="t in personalTasks"
-            :key="t.id"
-            :class="['todo-row', { done: t.completed }]"
-          >
+          <label class="task-date-field">截止日期（可选）
+            <input v-model="taskDraftDueDate" type="date" aria-label="新待办截止日期" :disabled="taskSaving" />
+          </label>
+          <template v-for="t in personalTasks" :key="t.id">
+          <div :class="['todo-row', { done: t.completed }]">
             <label class="todo-label"
               ><input
                 :checked="t.completed"
@@ -3389,7 +3426,12 @@ onBeforeUnmount(() => {
               /><span class="custom-check"
                 ><AppIcon name="check" :size="13" /></span
               ><span>{{ t.title }}</span></label
-            ><span class="due">{{ new Date(t.createdAt).toLocaleDateString("zh-CN") }}</span
+            ><span v-if="t.dueDate" :class="['due', { 'task-overdue': !t.completed && t.dueDate < new Date().toLocaleDateString('sv-SE') }]">
+              截止 {{ t.dueDate }}<span v-if="!t.completed && t.dueDate < new Date().toLocaleDateString('sv-SE')"> · 已逾期</span>
+            </span
+            ><span v-else class="due">创建 {{ new Date(t.createdAt).toLocaleDateString("zh-CN") }}</span
+            ><button type="button" class="text-button" :disabled="taskSaving" :aria-label="`编辑 ${t.title}`"
+              @click="startTaskEdit(t)">编辑</button
             ><button v-if="t.sourceGroupId && t.sourceMessageId" type="button" class="text-button"
               :aria-label="`查看 ${t.title} 的来源消息`" @click="openTaskSource(t)">查看来源</button
             ><button
@@ -3401,6 +3443,14 @@ onBeforeUnmount(() => {
               <AppIcon name="trash" :size="16" />
             </button>
           </div>
+          <div v-if="editingTaskId === t.id" class="task-edit-panel">
+            <label>标题<input v-model="editingTaskTitle" maxlength="100" aria-label="编辑待办标题" /></label>
+            <label>截止日期<input v-model="editingTaskDueDate" type="date" aria-label="编辑待办截止日期" /></label>
+            <button type="button" :disabled="!editingTaskTitle.trim() || taskSaving"
+              @click="saveTaskEdit">保存</button>
+            <button type="button" :disabled="taskSaving" @click="editingTaskId = null">取消</button>
+          </div>
+          </template>
           <p v-if="taskError" class="error-text" role="alert">{{ taskError }}</p>
           <button v-if="taskError && !taskLoading" class="text-button" @click="refreshTasks()">重试加载</button>
           <div v-if="taskLoading && !personalTasks.length" class="empty-state">正在加载待办…</div>

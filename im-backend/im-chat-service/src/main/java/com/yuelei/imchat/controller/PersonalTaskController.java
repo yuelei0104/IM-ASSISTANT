@@ -10,6 +10,7 @@ import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/chats/tasks")
@@ -18,8 +19,10 @@ public class PersonalTaskController {
 
     public PersonalTaskController(PersonalTaskService tasks) { this.tasks = tasks; }
 
-    public record Create(@NotBlank @Size(max = 100) String title, Long sourceGroupId, Long sourceMessageId) { }
+    public record Create(@NotBlank @Size(max = 100) String title, Long sourceGroupId,
+                         Long sourceMessageId, LocalDate dueDate) { }
     public record Complete(@NotNull Boolean completed) { }
+    public record Details(@NotBlank @Size(max = 100) String title, LocalDate dueDate) { }
 
     @GetMapping
     public ResponseEntity<PersonalTaskService.Page> list(
@@ -34,7 +37,15 @@ public class PersonalTaskController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @Valid @RequestBody Create request) {
         return ResponseEntity.status(HttpStatus.CREATED).cacheControl(CacheControl.noStore())
-                .body(tasks.create(auth, request.title(), request.sourceGroupId(), request.sourceMessageId()));
+                .body(tasks.create(auth, request.title(), request.sourceGroupId(), request.sourceMessageId(), request.dueDate()));
+    }
+
+    @PutMapping("/{id}/details")
+    public ResponseEntity<PersonalTask> updateDetails(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id, @Valid @RequestBody Details request) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(tasks.updateDetails(auth, id, request.title(), request.dueDate()));
     }
 
     @PatchMapping("/{id}")

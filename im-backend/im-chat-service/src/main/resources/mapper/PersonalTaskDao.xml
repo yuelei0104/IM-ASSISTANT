@@ -10,15 +10,16 @@
             <arg column="created_at" javaType="java.time.LocalDateTime"/>
             <arg column="source_group_id" javaType="java.lang.Long"/>
             <arg column="source_message_id" javaType="java.lang.Long"/>
+            <arg column="due_date" javaType="java.time.LocalDate"/>
         </constructor>
     </resultMap>
     <insert id="insert" parameterType="com.yuelei.imchat.dao.PersonalTaskDao$Draft"
             useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO im_personal_task (owner_id, title, source_group_id, source_message_id)
-        VALUES (#{ownerId}, #{title}, #{sourceGroupId,jdbcType=BIGINT}, #{sourceMessageId,jdbcType=BIGINT})
+        INSERT INTO im_personal_task (owner_id, title, source_group_id, source_message_id, due_date)
+        VALUES (#{ownerId}, #{title}, #{sourceGroupId,jdbcType=BIGINT}, #{sourceMessageId,jdbcType=BIGINT}, #{dueDate,jdbcType=DATE})
     </insert>
     <sql id="visibleTask">
-        SELECT t.id, t.title, t.completed, t.created_at,
+        SELECT t.id, t.title, t.completed, t.created_at, t.due_date,
                CASE WHEN gm.id IS NOT NULL THEN t.source_group_id END AS source_group_id,
                CASE WHEN gm.id IS NOT NULL THEN t.source_message_id END AS source_message_id
         FROM im_personal_task t
@@ -46,6 +47,10 @@
     </select>
     <update id="setCompleted">
         UPDATE im_personal_task SET completed = #{completed}
+        WHERE owner_id = #{ownerId} AND id = #{id}
+    </update>
+    <update id="updateDetails">
+        UPDATE im_personal_task SET title = #{title}, due_date = #{dueDate,jdbcType=DATE}
         WHERE owner_id = #{ownerId} AND id = #{id}
     </update>
     <delete id="delete">

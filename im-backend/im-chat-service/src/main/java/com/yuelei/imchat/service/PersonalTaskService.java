@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.time.LocalDate;
 
 @Service
 public class PersonalTaskService {
@@ -35,11 +36,10 @@ public class PersonalTaskService {
     }
 
     @Transactional
-    public PersonalTask create(String auth, String rawTitle, Long sourceGroupId, Long sourceMessageId) {
+    public PersonalTask create(String auth, String rawTitle, Long sourceGroupId, Long sourceMessageId,
+                               LocalDate dueDate) {
         long owner = access.requireUser(auth);
-        String title = rawTitle == null ? "" : rawTitle.trim();
-        if (title.isEmpty() || title.length() > 100)
-            throw new ChatException(HttpStatus.BAD_REQUEST, "待办标题应为 1 到 100 个字符");
+        String title = validTitle(rawTitle);
         if ((sourceGroupId == null) != (sourceMessageId == null) ||
                 sourceGroupId != null && (sourceGroupId <= 0 || sourceMessageId <= 0))
             throw new ChatException(HttpStatus.BAD_REQUEST, "消息来源参数无效");
@@ -54,12 +54,29 @@ public class PersonalTaskService {
             if (source == null || source.recalledAt() != null)
                 throw new ChatException(HttpStatus.NOT_FOUND, "消息来源不存在或不可查看");
         }
-        var draft = new PersonalTaskDao.Draft(owner, title, sourceGroupId, sourceMessageId);
+        var draft = new PersonalTaskDao.Draft(owner, title, sourceGroupId, sourceMessageId, dueDate);
         tasks.insert(draft);
         if (draft.getId() == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "待办保存失败");
         PersonalTask saved = tasks.owned(owner, draft.getId());
         if (saved == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "待办读取失败");
         return saved;
+    }
+
+    public PersonalTask updateDetails(String auth, long id, String rawTitle, LocalDate dueDate) {
+        long owner = access.requireUser(auth);
+        String title = validTitle(rawTitle);
+        if (id <= 0 || tasks.updateDetails(owner, id, title, dueDate) == 0)
+            throw new ChatException(HttpStatus.NOT_FOUND, "待办不存在");
+        PersonalTask saved = tasks.owned(owner, id);
+        if (saved == null) throw new ChatException(HttpStatus.NOT_FOUND, "待办不存在");
+        return saved;
+    }
+
+    private static String validTitle(String rawTitle) {
+        String title = rawTitle == null ? "" : rawTitle.trim();
+        if (title.isEmpty() || title.length() > 100)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "待办标题应为 1 到 100 个字符");
+        return title;
     }
 
     public PersonalTask complete(String auth, long id, boolean completed) {
