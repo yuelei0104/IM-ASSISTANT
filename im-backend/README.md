@@ -362,6 +362,30 @@ claims; it does not automatically certify the model's accuracy. Run
 `python .\tools\group_privacy_probe.py --check-summary` with a local model
 after restarting chat-service to verify source visibility as well.
 
+### Private group translation preview
+
+Group messages also offer an optional, private translation preview at
+`POST /api/chats/groups/{groupId}/messages/{messageId}/translation` with
+`{"targetLanguage":"en"}` or `"zh"`. Only a current member who can see the
+original, non-recalled text or caption can request it. Messages before their
+join cursor are hidden. The server checks access both before and after the
+local model responds, in case membership or recall changes during inference.
+The response is `Cache-Control: no-store`; the translation is not written to
+MySQL or sent to the group. The web client lets the user edit the preview and
+explicitly put it into the composer for review before sending. It is not
+automatically posted. The same local `IM_SUMMARY_MODEL` and loopback Ollama
+configuration described above is used; without it the endpoint returns 503.
+After restarting chat-service, check access and the preview flow with:
+
+```powershell
+Set-Location D:\im-assistant\im-backend
+python .\tools\group_translation_probe.py
+```
+
+This probe creates three disposable accounts and calls the local model once.
+It verifies the preview shape and privacy boundaries, but a person should
+still review the quality of the translated text in the browser.
+
 ### Personal tasks
 
 Chat Flyway V8 creates `im_personal_task`. `GET /api/chats/tasks?limit=50&beforeId=123`

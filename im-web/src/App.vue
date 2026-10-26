@@ -50,7 +50,7 @@ import {
   recallGroupMessage, listGroupRecalls,
   listGroups, loadGroupMessages,
   markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages, listGroupSummaries, generateGroupSummary,
-  listGroupSummarySources, type GroupChat, type GroupMessage, type GroupSummary, type SummarySource,
+  listGroupSummarySources, translateGroupMessage, type GroupChat, type GroupMessage, type GroupSummary, type SummarySource,
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, getAlertKeywords, saveAlertKeywords, type MentionNotice } from "./noticeApi";
 import { listTasks, createTask, updateTaskDetails, completeTask, deleteTask, type PersonalTask, type TaskSource } from "./taskApi";
@@ -170,6 +170,12 @@ const page = ref<Page>("chat");
 const activeId = ref("");
 const search = ref("");
 const composer = ref("");
+const translationPreview = ref<{ groupId: number; messageId: number; text: string; target: "en" | "zh" } | null>(null);
+const translationDraft = ref("");
+const translationFor = ref<string | null>(null);
+const translationBusy = ref<string | null>(null);
+const translationError = ref("");
+let translationSeq = 0;
 const mentionPickerOpen = ref(false);
 const mentionSelections = ref<Record<number, string>>({});
 const modal = ref<Modal>(null);
@@ -316,6 +322,7 @@ watch(knownPeers, (peers) => {
   try { localStorage.setItem(peerCacheKey(currentAccount.value.id), JSON.stringify(peers)); } catch {}
 }, { deep: true });
 watch(activeId, () => {
+  clearTranslationPreview();
   closeHistorySearch();
   closeMessageContext(false);
   mentionPickerOpen.value = false;
@@ -470,6 +477,50 @@ function clearSummaryEvidence() {
   summaryEvidence.value = [];
   summaryEvidenceBusy.value = false;
   summaryEvidenceError.value = "";
+}
+function clearTranslationPreview() {
+  translationSeq++;
+  translationPreview.value = null;
+  translationDraft.value = "";
+  translationFor.value = null;
+  translationBusy.value = null;
+  translationError.value = "";
+}
+async function previewGroupTranslation(message: Message) {
+  const groupId = serverGroupId(activeId.value);
+  const match = /^group-message-([1-9]\d*)$/.exec(message.id);
+  const messageId = match ? Number(match[1]) : 0;
+  const accountId = currentAccount.value?.id;
+  if (!groupId || !accountId || !Number.isSafeInteger(messageId) || !messageId || message.recalled || translationBusy.value) return;
+  const target = data.value.preferences.translationTarget;
+  const sequence = ++translationSeq;
+  translationPreview.value = null;
+  translationDraft.value = "";
+  translationError.value = "";
+  translationFor.value = message.id;
+  translationBusy.value = message.id;
+  try {
+    const result = await translateGroupMessage(groupId, messageId, target);
+    if (sequence !== translationSeq || currentAccount.value?.id !== accountId
+        || serverGroupId(activeId.value) !== groupId) return;
+    translationPreview.value = { groupId, messageId, text: result.text, target };
+    translationDraft.value = result.text;
+  } catch (error) {
+    if (sequence === translationSeq && currentAccount.value?.id === accountId)
+      translationError.value = error instanceof Error ? error.message : "翻译失败";
+  } finally {
+    if (sequence === translationSeq) translationBusy.value = null;
+  }
+}
+function useTranslationPreview() {
+  const preview = translationPreview.value;
+  if (!preview || contextActive.value || !canWrite.value ||
+      serverGroupId(activeId.value) !== preview.groupId || !translationDraft.value.trim()) return;
+  const combined = [composer.value.trim(), translationDraft.value.trim()].filter(Boolean).join("\n");
+  if (combined.length > 4000) { notify("输入框内容超过 4000 字，请先精简译文"); return; }
+  composer.value = combined;
+  clearTranslationPreview();
+  notify("译文已填入输入框，请检查后自行发送");
 }
 async function toggleSummaryEvidence(summaryId: number) {
   if (summaryEvidenceFor.value === summaryId) {
@@ -787,6 +838,7 @@ function forgetGroup(groupId: number) {
     groupRecalled.clear();
     groupSummaries.value = [];
     clearSummaryEvidence();
+    clearTranslationPreview();
     groupSyncCursor.value = null;
     groupNextBeforeId.value = null;
     groupPendingSend = null;
@@ -837,6 +889,8 @@ function mergeGroup(incoming: GroupMessage[]) {
   groupMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
 }
 function applyGroupRecall(recall: MessageRecall) {
+  if (translationPreview.value?.messageId === recall.messageId ||
+      translationBusy.value === `group-message-${recall.messageId}`) clearTranslationPreview();
   groupRecalled.set(recall.messageId, recall.recalledAt);
   const redact = (m: DirectMessage | GroupMessage) =>
     m.id === recall.messageId && "groupId" in m ? { ...m, body: "", recalledAt: recall.recalledAt } : m;
@@ -1136,6 +1190,7 @@ async function requestCode(
   }
 }
 function applyAccount(account: Account) {
+  clearTranslationPreview();
   chatSocket?.close();
   pendingRealtimeRefresh = false;
   pendingGroupRefresh = false;
@@ -1395,6 +1450,7 @@ async function signOut() {
     }
   }
   stopVoice();
+  clearTranslationPreview();
   closeHistorySearch();
   closeMessageContext(false);
   chatSocket?.close();
@@ -2886,7 +2942,7 @@ onBeforeUnmount(() => {
         </section>
         <div class="chat-notice">
           <AppIcon name="shield" :size="15" />
-          消息已保存；在线时实时推送，断线后自动补拉。翻译与 AI 总结仍在开发中。
+          消息已保存；在线时实时推送，断线后自动补拉。群消息可请求本机翻译并核对后发送。
         </div>
         <div v-if="contextActive" class="context-banner">
           <span>正在查看搜索结果附近的消息 · 新消息仍会在后台同步</span>
@@ -2956,6 +3012,10 @@ onBeforeUnmount(() => {
                       type="button" class="text-button message-recall"
                       :aria-label="`从消息创建待办 ${m.time}`"
                       @click="stageTaskFromMessage(m)">设为待办</button>
+                    <button v-if="serverGroupId(activeId) && !m.recalled && m.id.startsWith('group-message-')"
+                      type="button" class="text-button message-recall"
+                      :disabled="!!translationBusy" :aria-label="`翻译消息 ${m.time}`"
+                      @click="previewGroupTranslation(m)">{{ translationBusy === m.id ? "翻译中…" : "翻译" }}</button>
                   </div>
                   <div :class="['bubble', { recalled: m.recalled }]">
                     <span v-if="m.kind === 'voice'" class="voice-label"
@@ -2968,6 +3028,19 @@ onBeforeUnmount(() => {
                   >
                     <AppIcon name="globe" :size="13" /> 译文 ·
                     {{ m.translation }}
+                  </div>
+                  <div v-if="translationFor === m.id && translationError" class="error-text" role="alert">
+                    {{ translationError }}
+                  </div>
+                  <div v-if="translationFor === m.id && translationPreview" class="translation-preview">
+                    <strong>本机翻译预览 · {{ translationPreview.target === "en" ? "English" : "简体中文" }}</strong>
+                    <p>请核对人名、数字和语义。预览仅自己可见，不会自动发送。</p>
+                    <textarea v-model="translationDraft" rows="3" maxlength="4000" aria-label="可编辑译文" />
+                    <div class="translation-preview-actions">
+                      <button type="button" :disabled="!translationDraft.trim() || contextActive || !canWrite"
+                        @click="useTranslationPreview">填入输入框</button>
+                      <button type="button" @click="clearTranslationPreview">丢弃</button>
+                    </div>
                   </div>
                   <div v-if="m.status" class="delivery">仅本地 · 未同步</div>
                   <div v-else-if="m.readReceipt" class="delivery" aria-live="polite">{{ m.readReceipt }}</div>
@@ -3215,7 +3288,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="assistant-footer">
-          <span class="status-dot" /> 群聊摘要仅群成员可见 · 翻译待接入
+          <span class="status-dot" /> 群聊摘要仅群成员可见 · 群消息本机翻译需手动确认
         </div>
       </aside>
     </div>
@@ -3683,7 +3756,7 @@ onBeforeUnmount(() => {
           <div class="setting-row">
             <div>
               <strong>默认翻译目标</strong>
-              <p>翻译服务接入后使用</p>
+              <p>群消息点击“翻译”时使用，译文需检查后手动发送</p>
             </div>
             <select
               v-model="data.preferences.translationTarget"
