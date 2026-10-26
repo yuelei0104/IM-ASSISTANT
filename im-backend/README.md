@@ -277,7 +277,7 @@ accounts:
 Set-Location D:\im-assistant\im-backend
 python .\tools\group_keyword_probe.py
 ```
-Direct-chat discussion hints and tasks remain browser demos.
+Direct-chat discussion hints remain browser demos.
 
 Chat Flyway V9 adds a `kind` to group messages (`TEXT` by default, `CAPTION`
 for explicitly shared speech text). In a discussion room, the microphone
@@ -359,6 +359,23 @@ accepts `{ "completed": true }`; `DELETE /api/chats/tasks/{id}` removes an item.
 All requests require the bearer session; SQL reads and writes are scoped to its
 user ID. Tasks are personal, not shared with group members. The feature needs
 MySQL and the user service, but does not require an AI model.
+
+Flyway V12 lets a person explicitly turn a currently visible group message
+into a personal task. `POST /api/chats/tasks` may include `sourceGroupId` and
+`sourceMessageId` alongside the reviewed, editable `title`; both source IDs
+must be supplied together. The server locks the group and verifies current
+membership, join cursor and message recall status before saving. It never
+generates or saves a task automatically. Task listings include the source IDs
+only while that person can still see the live group message; removal, leaving,
+re-invitation past the old message, recall and dissolution hide the link. The
+user-confirmed title remains a private note after those changes, and the task
+does not hold a copy of the source message body. The browser rechecks access
+when the user clicks **查看来源**. This works while Ollama is downloading:
+
+```powershell
+Set-Location D:\im-assistant\im-backend
+python .\tools\message_task_probe.py
+```
 
 ## Optional local gateway
 

@@ -53,7 +53,7 @@ import {
   type GroupChat, type GroupMessage, type GroupSummary,
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, getAlertKeywords, saveAlertKeywords, type MentionNotice } from "./noticeApi";
-import { listTasks, createTask, completeTask, deleteTask, type PersonalTask } from "./taskApi";
+import { listTasks, createTask, completeTask, deleteTask, type PersonalTask, type TaskSource } from "./taskApi";
 import { syncForward } from "./incrementalSync";
 import { resumeCursor, savedCursor, saveCursor } from "./syncCursor";
 import {
@@ -181,6 +181,7 @@ const toast = ref("");
 const range = ref<"recent" | "all">("recent");
 const showSummary = ref(false);
 const taskDraft = ref("");
+const taskSource = ref<TaskSource | null>(null);
 const personalTasks = ref<PersonalTask[]>([]);
 const taskNextBeforeId = ref<number | null>(null);
 const taskOpenCount = ref(0);
@@ -1115,6 +1116,7 @@ function applyAccount(account: Account) {
   taskLoading.value = false;
   taskSaving.value = false;
   taskError.value = "";
+  taskSource.value = null;
   directSyncCursor.value = null;
   groupSyncCursor.value = null;
   serverGroups.value = [];
@@ -1377,6 +1379,7 @@ async function signOut() {
   taskLoading.value = false;
   taskSaving.value = false;
   taskError.value = "";
+  taskSource.value = null;
   directSyncCursor.value = null;
   groupSyncCursor.value = null;
   serverGroups.value = [];
@@ -1902,6 +1905,37 @@ async function refreshTasks(beforeId?: number) {
     if (sequence === taskSeq) taskLoading.value = false;
   }
 }
+function stageTaskFromMessage(message: Message) {
+  const groupId = serverGroupId(activeId.value);
+  const match = /^group-message-([1-9]\d*)$/.exec(message.id);
+  const messageId = match ? Number(match[1]) : 0;
+  if (!groupId || !Number.isSafeInteger(messageId) || !messageId || message.recalled) return;
+  taskSource.value = { sourceGroupId: groupId, sourceMessageId: messageId };
+  taskDraft.value = message.text.trim().slice(0, 100);
+  taskError.value = "";
+  page.value = "tasks";
+  notify("请检查并编辑标题，点击添加后才会保存为私人待办");
+}
+async function openTaskSource(task: PersonalTask) {
+  if (!task.sourceGroupId || !task.sourceMessageId || !currentAccount.value) return;
+  const accountId = currentAccount.value.id;
+  try {
+    const target = await getGroupMessage(task.sourceGroupId, task.sourceMessageId);
+    if (currentAccount.value?.id !== accountId) return;
+    if (target.recalledAt) throw new Error("来源消息已撤回");
+    const id = `server-group-${task.sourceGroupId}`;
+    if (!serverGroups.value.some((group) => group.id === task.sourceGroupId)) await refreshGroups();
+    if (!serverGroups.value.some((group) => group.id === task.sourceGroupId)) throw new Error("已无权查看来源讨论室");
+    openChat(id);
+    if (activeId.value !== id) return;
+    await nextTick();
+    await openMessageContext(target);
+  } catch (error) {
+    taskError.value = error instanceof Error ? error.message : "无法打开来源消息";
+    notify(taskError.value);
+    void refreshTasks(); // The server removes references after recall or membership changes.
+  }
+}
 async function addTask() {
   const title = taskDraft.value.trim();
   const accountId = currentAccount.value?.id;
@@ -1912,11 +1946,12 @@ async function addTask() {
   taskError.value = "";
   let savedOk = false;
   try {
-    const saved = await createTask(title);
+    const saved = await createTask(title, taskSource.value || undefined);
     if (sequence !== taskSeq || currentAccount.value?.id !== accountId) return;
     personalTasks.value.unshift(saved);
     taskOpenCount.value++;
     taskDraft.value = "";
+    taskSource.value = null;
     page.value = "tasks";
     savedOk = true;
     notify("待办已创建");
@@ -2830,6 +2865,10 @@ onBeforeUnmount(() => {
                     <button v-if="canRecallMessage(m)" type="button" class="text-button message-recall"
                       :disabled="!!recallingMessageId" :aria-label="`撤回消息 ${m.time}`"
                       @click="recallVisibleMessage(m)">撤回</button>
+                    <button v-if="serverGroupId(activeId) && !m.recalled && m.id.startsWith('group-message-')"
+                      type="button" class="text-button message-recall"
+                      :aria-label="`从消息创建待办 ${m.time}`"
+                      @click="stageTaskFromMessage(m)">设为待办</button>
                   </div>
                   <div :class="['bubble', { recalled: m.recalled }]">
                     <span v-if="m.kind === 'voice'" class="voice-label"
@@ -3328,6 +3367,10 @@ onBeforeUnmount(() => {
               添加
             </button>
           </div>
+          <p v-if="taskSource" class="task-source-draft">
+            来源：讨论室消息。请编辑标题并确认保存，仅自己可见。
+            <button type="button" class="text-button" @click="taskSource = null">取消关联来源</button>
+          </p>
           <div
             v-for="t in personalTasks"
             :key="t.id"
@@ -3344,6 +3387,8 @@ onBeforeUnmount(() => {
                 ><AppIcon name="check" :size="13" /></span
               ><span>{{ t.title }}</span></label
             ><span class="due">{{ new Date(t.createdAt).toLocaleDateString("zh-CN") }}</span
+            ><button v-if="t.sourceGroupId && t.sourceMessageId" type="button" class="text-button"
+              :aria-label="`查看 ${t.title} 的来源消息`" @click="openTaskSource(t)">查看来源</button
             ><button
               class="icon-button subdued"
               :aria-label="`删除 ${t.title}`"

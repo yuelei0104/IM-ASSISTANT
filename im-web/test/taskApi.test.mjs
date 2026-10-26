@@ -25,6 +25,21 @@ test("personal task requests stay authenticated and preserve user edits", async 
   assert.equal(calls[3].options.method, "DELETE");
 });
 
+test("message task sends only reviewed title and source identifiers", async () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "my-token" : null };
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/chats/tasks");
+    assert.equal(options.method, "POST");
+    assert.deepEqual(JSON.parse(options.body), {
+      title: "确认后的标题", sourceGroupId: 4, sourceMessageId: 8,
+    });
+    return Response.json({ id: 7, title: "确认后的标题", completed: false,
+      sourceGroupId: 4, sourceMessageId: 8 }, { status: 201 });
+  };
+  const saved = await createTask("确认后的标题", { sourceGroupId: 4, sourceMessageId: 8 });
+  assert.equal(saved.sourceMessageId, 8);
+});
+
 test("personal task calls without a session never reach the server", async () => {
   globalThis.sessionStorage = { getItem: () => null };
   globalThis.fetch = () => { throw new Error("unexpected request"); };

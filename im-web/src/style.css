@@ -1298,6 +1298,15 @@ svg {
   gap: 12px;
   min-height: 62px;
 }
+.task-source-draft {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #536770;
+  font-size: 12px;
+}
+.todo-row > .text-button { white-space: nowrap; }
 .todo-label {
   display: flex;
   align-items: center;
