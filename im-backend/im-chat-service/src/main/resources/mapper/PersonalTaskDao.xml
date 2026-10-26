@@ -22,11 +22,11 @@
                CASE WHEN gm.id IS NOT NULL THEN t.source_group_id END AS source_group_id,
                CASE WHEN gm.id IS NOT NULL THEN t.source_message_id END AS source_message_id
         FROM im_personal_task t
-        LEFT JOIN im_group_member member
-          ON member.group_id = t.source_group_id AND member.user_id = #{ownerId}
+        LEFT JOIN im_group_member membership
+          ON membership.group_id = t.source_group_id AND membership.user_id = #{ownerId}
         LEFT JOIN im_group_message gm
           ON gm.id = t.source_message_id AND gm.group_id = t.source_group_id
-         AND gm.id &gt; member.joined_after_id AND gm.recalled_at IS NULL
+         AND gm.id &gt; membership.joined_after_id AND gm.recalled_at IS NULL
     </sql>
     <select id="owned" resultMap="task">
         <include refid="visibleTask"/>
