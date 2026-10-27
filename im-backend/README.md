@@ -653,3 +653,36 @@ still drop the hint; on reconnect the browser reads its MySQL cursor. The
 outbox does not backfill notifications from messages sent before Kafka mode
 was enabled. Start all chat instances in the same mode to avoid duplicate
 notifications through the old direct Redis path.
+
+### Bounded message baseline and broker recovery report
+
+Keep the local user service in `dev` mode, both Kafka-enabled chat nodes,
+gateway `cluster` profile, Docker MySQL/Redis and the Kafka broker running.
+Run from `D:\im-assistant\im-backend` (Python 3 standard library only):
+
+```powershell
+python .\tools\message_benchmark.py --sizes 100,500,1000 --concurrency 5
+python .\tools\message_benchmark.py --sizes 100,500,1000 --concurrency 20
+```
+
+Each invocation registers four disposable accounts as two friend pairs; it
+sends the listed **total** number of direct messages per stage through the
+gateway and exhausts every 50-row receiver sync page. The report compares
+client message IDs, bodies, sender/recipient IDs and returned server IDs to
+find missing, duplicate, unexpected or mismatched rows. It records successful
+HTTP acknowledgement throughput and nearest-rank p50/p95/p99 latency,
+along with the two nodes' outbox metrics before and after. A nonzero exit
+means an acceptance failure; after each stage, the script stops before
+the next size if correctness fails. JSON reports go to the ignored
+`benchmark-results` directory and never contain tokens, passwords or
+message text. Outbox metrics cover the entire development database, so run
+without unrelated chat traffic when comparing stages. Records and accounts
+remain in the **development** database.
+
+To also measure a bounded Kafka outage and the time to drain that run's
+outbox rows after restart, add `--outage-count 20`. This option temporarily
+stops **only this Compose project's Kafka container** and starts it again in
+a `finally` block; do not run it against shared infrastructure. It does not
+measure WebSocket delivery latency. This is a local few-conversation contention
+baseline, not peak cluster capacity; report the hardware, sizes, concurrency,
+success count and latency together when discussing results.
