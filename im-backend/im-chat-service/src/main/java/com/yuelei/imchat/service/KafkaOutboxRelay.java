@@ -21,12 +21,14 @@ public class KafkaOutboxRelay {
     private static final Logger log = LoggerFactory.getLogger(KafkaOutboxRelay.class);
     private final SqlSessionFactory sessions;
     private final KafkaTemplate<String, String> kafka;
+    private final KafkaOutboxMetrics metrics;
     private final String topic;
 
     public KafkaOutboxRelay(SqlSessionFactory sessions, KafkaTemplate<String, String> kafka,
-                            @Value("${im.kafka.topic}") String topic) {
+                            KafkaOutboxMetrics metrics, @Value("${im.kafka.topic}") String topic) {
         this.sessions = sessions;
         this.kafka = kafka;
+        this.metrics = metrics;
         this.topic = topic;
     }
 
@@ -49,6 +51,7 @@ public class KafkaOutboxRelay {
                     } catch (ExecutionException | TimeoutException ex) {
                         // A timeout may actually have reached Kafka. Retrying
                         // can duplicate the ID-only notification; clients sync by ID.
+                        metrics.relayFailed();
                         log.warn("Kafka notification relay paused at outbox row {}", row.getId(), ex);
                         return;
                     }
@@ -57,6 +60,7 @@ public class KafkaOutboxRelay {
                 outbox.releaseLock();
             }
         } catch (RuntimeException ex) {
+            metrics.relayFailed();
             log.warn("Kafka outbox relay unavailable; pending rows will be retried", ex);
         }
     }

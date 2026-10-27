@@ -21,9 +21,21 @@ services:
     volumes:
       - redis_data:/data
 
+  kafka-volume-init:
+    profiles: [kafka]
+    image: apache/kafka:4.1.1
+    user: "0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R 1000:1000 /tmp/kraft-combined-logs"]
+    volumes:
+      - kafka_data:/tmp/kraft-combined-logs
+
   kafka:
     profiles: [kafka]
     image: apache/kafka:4.1.1
+    depends_on:
+      kafka-volume-init:
+        condition: service_completed_successfully
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller

@@ -12,6 +12,8 @@ public interface OutboxDao {
     Integer tryLock();
     Integer releaseLock();
     List<OutboxRow> pending(@Param("limit") int limit);
+    long countPending();
+    long oldestPendingSeconds();
     int markPublished(@Param("id") long id);
     int deletePublished(@Param("limit") int limit);
 }
