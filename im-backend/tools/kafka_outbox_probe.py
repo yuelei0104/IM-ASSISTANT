@@ -8,6 +8,7 @@ its finally block restarts Kafka even if an assertion fails.
 """
 
 import argparse
+from pathlib import Path
 import subprocess
 import sys
 import time
@@ -20,9 +21,12 @@ from message_recall_probe import new_account
 
 def compose(*args):
     result = subprocess.run(["docker", "compose", "--profile", "kafka", *args],
+                            cwd=Path(__file__).resolve().parents[1],
                             text=True, capture_output=True, check=False, timeout=120)
     if result.returncode:
-        raise ProbeFailure("Docker Compose operation failed; check 'docker compose --profile kafka ps'")
+        raise ProbeFailure("Docker Compose operation failed: " +
+                           (result.stderr.strip().splitlines()[-1] if result.stderr.strip()
+                            else "check 'docker compose --profile kafka ps --all'"))
     return result.stdout.strip()
 
 
@@ -40,13 +44,16 @@ def outbox_count(message_id, sender_id, recipient_id, published):
         raise ProbeFailure("Could not inspect notification outbox") from error
 
 
-def wait_published(message_id, sender_id, recipient_id, timeout=60):
+def wait_published(message_id, sender_id, recipient_id, stage, timeout=60):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if outbox_count(message_id, sender_id, recipient_id, True):
             return
         time.sleep(1)
-    raise ProbeFailure("outbox row did not reach Kafka after broker recovery")
+    if stage == "baseline" and not outbox_count(message_id, sender_id, recipient_id, False):
+        raise ProbeFailure("baseline message has no outbox row; restart both chat nodes "
+                           "from the current jar with IM_KAFKA_ENABLED=true")
+    raise ProbeFailure(stage + " outbox row remains unpublished; check Kafka and chat relay logs")
 
 
 def main():
@@ -54,6 +61,8 @@ def main():
     parser.add_argument("--user-url", type=loopback_url, default="http://127.0.0.1:8081")
     parser.add_argument("--chat-url", type=loopback_url, default="http://127.0.0.1:8080")
     args = parser.parse_args()
+    if not compose("ps", "--status", "running", "-q", "kafka"):
+        raise ProbeFailure("Kafka is not running; run 'docker compose --profile kafka up -d kafka'")
     a_id, _, a = new_account(args.user_url, "a")
     b_id, b_handle, b = new_account(args.user_url, "b")
     expect("friend request", call(args.user_url, "/api/contacts/requests", a,
@@ -71,7 +80,7 @@ def main():
             "clientMsgId": str(uuid.uuid4()), "body": "Kafka 基线通知",
         }), 200)
         recipient.expect_message(first["id"], a_id, b_id)
-        wait_published(first["id"], a_id, b_id, 15)
+        wait_published(first["id"], a_id, b_id, "baseline", 15)
 
         stopped = False
         try:
@@ -100,7 +109,7 @@ def main():
             check(notice == previous, "unexpected notification during Kafka recovery")
         else:
             raise ProbeFailure("Kafka recovery did not notify the recipient")
-        wait_published(missed["id"], a_id, b_id)
+        wait_published(missed["id"], a_id, b_id, "recovery")
         print("PASS: Kafka outage kept message and outbox durable; recovery replayed ID-only notice")
         print("Two disposable accounts and two messages remain in the local development database.")
 

@@ -572,10 +572,15 @@ days ago are cleaned up. Kafka holds no message bodies or bearer tokens.
 
 The Compose Kafka broker is a single local KRaft node with replication factor
 one. It is for outage/retry testing, not broker high availability. Start it
-only when testing Kafka, from `D:\im-assistant\im-backend`:
+only when testing Kafka, from `D:\im-assistant\im-backend`. The optional
+`kafka-volume-init` service first assigns the persistent Kafka directory to
+the image's UID/GID 1000; this also repairs an existing root-owned volume
+without deleting its contents. Do not use `docker compose down -v` to fix a
+permission error: that would remove the project's MySQL and Redis volumes.
 
 ```powershell
 docker compose --profile kafka up -d kafka
+docker compose --profile kafka ps --all
 docker compose --profile kafka exec kafka /opt/kafka/bin/kafka-topics.sh `
   --bootstrap-server localhost:19092 --create --if-not-exists `
   --topic im.chat.notifications.v1 --partitions 6 --replication-factor 1
@@ -613,10 +618,34 @@ The second script stops only this Compose project's Kafka container after a
 baseline send, verifies that another send still commits and has a pending
 outbox row, restarts Kafka in a `finally` block, and waits for the recipient's
 WebSocket notice. It requires Docker Compose and the user service's `dev`
-profile; it creates two disposable accounts and two messages. Avoid running
+profile; it creates two disposable accounts and two messages. The script
+resolves Compose relative to its own location, so it can also be invoked as
+`python .\im-backend\tools\kafka_outbox_probe.py` from the repository root.
+It reports a missing baseline outbox separately from a relay stall. Avoid running
 other Kafka outage checks at the same time. If an external process kills the
 script during the broker pause, restore with
 `docker compose --profile kafka start kafka`.
+
+With the `dev` profile and Kafka mode on, each chat node exposes three local
+Actuator metrics. Run these from PowerShell while both chat instances are up:
+
+```powershell
+foreach ($port in 8082,8083) {
+  foreach ($name in 'im.chat.outbox.pending','im.chat.outbox.oldest.seconds',
+                    'im.chat.outbox.relay.failures') {
+    $metric = Invoke-RestMethod "http://127.0.0.1:$port/actuator/metrics/$name"
+    "$port $name = $($metric.measurements[0].value)"
+  }
+}
+```
+
+The pending count and oldest age read the same MySQL table on both nodes;
+relay failure counters belong to each node and reset when it restarts. For a
+local warning threshold, inspect a sustained oldest age above 60 seconds or
+pending count above 100 after Kafka is healthy. An age reported as `NaN`
+means the metric could not query MySQL. These metrics are exposed only by the
+local `dev` profile; configure a protected management endpoint separately
+for other environments.
 
 Kafka is not used as a store for the actual message or a durable device
 delivery receipt. If the recipient has no live WebSocket, Redis Pub/Sub can

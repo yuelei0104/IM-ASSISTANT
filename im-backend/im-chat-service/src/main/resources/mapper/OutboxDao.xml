@@ -24,6 +24,13 @@
         SELECT id, event_key, payload FROM im_notification_outbox
         WHERE published_at IS NULL ORDER BY id LIMIT #{limit}
     </select>
+    <select id="countPending" resultType="java.lang.Long">
+        SELECT COUNT(*) FROM im_notification_outbox WHERE published_at IS NULL
+    </select>
+    <select id="oldestPendingSeconds" resultType="java.lang.Long">
+        SELECT COALESCE(TIMESTAMPDIFF(SECOND, MIN(created_at), CURRENT_TIMESTAMP(3)), 0)
+        FROM im_notification_outbox WHERE published_at IS NULL
+    </select>
     <update id="markPublished">
         UPDATE im_notification_outbox SET published_at = CURRENT_TIMESTAMP(3)
         WHERE id = #{id} AND published_at IS NULL

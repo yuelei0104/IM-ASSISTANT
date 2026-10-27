@@ -5,10 +5,12 @@ import com.yuelei.imchat.dao.OutboxDao;
 import com.yuelei.imchat.model.DirectMessage;
 import com.yuelei.imchat.model.OutboxRow;
 import com.yuelei.imchat.service.KafkaOutboxRelay;
+import com.yuelei.imchat.service.KafkaOutboxMetrics;
 import com.yuelei.imchat.service.KafkaRealtimeBridge;
 import com.yuelei.imchat.service.NotificationOutboxWriter;
 import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactory;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -53,12 +55,29 @@ class KafkaNotificationPipelineTest {
         when(kafka.send(TOPIC, "D:9:23", "91:23:9"))
                 .thenReturn(failed, CompletableFuture.completedFuture(null));
 
-        var relay = new KafkaOutboxRelay(factory, kafka, TOPIC);
+        KafkaOutboxMetrics metrics = mock(KafkaOutboxMetrics.class);
+        var relay = new KafkaOutboxRelay(factory, kafka, metrics, TOPIC);
         relay.publish();
         verify(dao, never()).markPublished(anyLong());
+        verify(metrics).relayFailed();
         relay.publish();
         verify(dao).markPublished(7);
         verify(dao, times(2)).releaseLock();
+    }
+
+    @Test
+    void metricsExposePendingRowsAgeAndRelayFailuresWithoutBreakingOnDatabaseOutage() {
+        OutboxDao dao = mock(OutboxDao.class);
+        when(dao.countPending()).thenReturn(4L);
+        when(dao.oldestPendingSeconds()).thenReturn(75L);
+        var registry = new SimpleMeterRegistry();
+        var metrics = new KafkaOutboxMetrics(dao, registry);
+        assertEquals(4.0, registry.get("im.chat.outbox.pending").gauge().value());
+        assertEquals(75.0, registry.get("im.chat.outbox.oldest.seconds").gauge().value());
+        metrics.relayFailed();
+        assertEquals(1.0, registry.get("im.chat.outbox.relay.failures").counter().count());
+        when(dao.countPending()).thenThrow(new IllegalStateException("database unavailable"));
+        assertTrue(Double.isNaN(registry.get("im.chat.outbox.pending").gauge().value()));
     }
 
     @Test
