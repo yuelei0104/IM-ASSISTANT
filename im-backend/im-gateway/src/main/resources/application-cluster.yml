@@ -1,18 +1,6 @@
 # Opt-in local two-node exercise. The normal profile still uses one chat node.
 spring:
   cloud:
-    discovery:
-      client:
-        simple:
-          instances:
-            im-chat-service:
-              - uri: ${IM_CHAT_NODE_A_URL:http://127.0.0.1:8082}
-              - uri: ${IM_CHAT_NODE_B_URL:http://127.0.0.1:8083}
-    loadbalancer:
-      configurations: health-check
-      health-check:
-        initial-delay: 0s
-        interval: 5s
     gateway:
       server:
         webflux:

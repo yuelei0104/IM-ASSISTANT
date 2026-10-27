@@ -902,6 +902,24 @@ svg {
   padding: 24px 1px;
   border-bottom: 1px solid #edf1f1;
 }
+.agent-ask {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #edf1f1;
+}
+.agent-ask label { font-size: 12px; color: #344b55; }
+.agent-question {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid #d7e0e7;
+  border-radius: 9px;
+  padding: 10px;
+  color: #273b48;
+  background: white;
+}
 .assist-label {
   display: flex;
   align-items: center;

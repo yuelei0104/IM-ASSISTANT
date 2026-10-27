@@ -38,6 +38,7 @@ export type SummarySource = {
   createdAt: string;
 };
 export type TranslationPreview = { sourceMessageId: number; targetLanguage: "en" | "zh"; text: string };
+export type GroupAgentAnswer = { answer: string; sources: { id: number; body: string }[] };
 export type GroupsPage = { items: GroupChat[]; nextBeforeId: number | null };
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
@@ -99,5 +100,7 @@ export const listGroupSummaries = (id: number) =>
   request<GroupSummary[]>(`/${id}/summaries`);
 export const generateGroupSummary = (id: number) =>
   request<GroupSummary>(`/${id}/summaries`, {});
+export const askGroupAgent = (id: number, question: string) =>
+  request<GroupAgentAnswer>(`/${id}/agent/ask`, { question });
 export const listGroupSummarySources = (id: number, summaryId: number) =>
   request<SummarySource[]>(`/${id}/summaries/${summaryId}/sources`);

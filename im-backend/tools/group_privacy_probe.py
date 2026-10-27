@@ -80,6 +80,8 @@ def main():
     parser.add_argument("--chat-url", type=loopback_url, default="http://127.0.0.1:8082")
     parser.add_argument("--check-summary", action="store_true",
                         help="also generate a pre-join summary; requires a running local model")
+    parser.add_argument("--check-agent", action="store_true",
+                        help="also verify local LangChain4j group RAG; requires both Ollama models")
     args = parser.parse_args()
     suffix = uuid.uuid4().hex[:10]
     users = []
@@ -133,6 +135,7 @@ def main():
         ("outsider message", f"/messages/{old_id}", None, None),
         ("outsider summaries", "/summaries", None, None),
         ("outsider summary generation", "/summaries", "POST", {}),
+        ("outsider agent", "/agent/ask", "POST", {"question": "会议说了什么"}),
         ("outsider caption send", "/messages", "POST", {
             "clientMsgId": str(uuid.uuid4()), "body": "不得发送",
             "mentionedUserIds": [], "kind": "CAPTION",
@@ -140,10 +143,16 @@ def main():
     ):
         expect(label, call(args.chat_url, path + suffix_path, c, body, method), 403)
 
+    if args.check_agent:
+        result = expect("owner Agent answer", call(args.chat_url, path + "/agent/ask", a,
+                        {"question": "原成员的字幕是什么"}, timeout=180), 200)
+        source_ids = [s["id"] for s in result.get("sources", [])]
+        check(source_ids == [old_id],
+              f"owner Agent sources expected [{old_id}], got {source_ids}")
     summary_id = None
     if args.check_summary:
         summary = expect("generate pre-join summary",
-                         call(args.chat_url, path + "/summaries", a, body={}, timeout=60), 200)
+                         call(args.chat_url, path + "/summaries", a, body={}, timeout=150), 200)
         summary_id = summary["id"]
         source_path = path + f"/summaries/{summary_id}/sources"
         owner_sources = expect("owner checks summary sources", call(args.chat_url, source_path, a), 200)
@@ -160,6 +169,9 @@ def main():
                                              path + "/messages/search?q=%E5%AD%97%E5%B9%95", c), 200)
     check(not history["messages"] and not sync["messages"] and not search["messages"],
           "newcomer can read pre-join caption")
+    if args.check_agent:
+        expect("newcomer has no pre-join Agent corpus", call(args.chat_url, path + "/agent/ask", c,
+               {"question": "原成员的字幕是什么"}), 400)
     expect("newcomer direct lookup", call(args.chat_url, f"{path}/messages/{old_id}", c), 404)
     listed = expect("newcomer summaries", call(args.chat_url, path + "/summaries", c), 200)
     check(summary_id is None or all(item["id"] != summary_id for item in listed),
@@ -179,6 +191,11 @@ def main():
     history = expect("newcomer new history", call(args.chat_url, path + "/messages", c), 200)
     check([m["id"] for m in history["messages"]] == [new["id"]],
           "newcomer did not see exactly the post-join caption")
+    if args.check_agent:
+        result = expect("newcomer Agent answer", call(args.chat_url, path + "/agent/ask", c,
+                        {"question": "新成员能看到什么字幕"}, timeout=180), 200)
+        check(result.get("sources") and all(s["id"] == new["id"] for s in result["sources"]),
+              "newcomer Agent cited a pre-join message")
 
     expect("owner cannot leave", call(args.chat_url, path + "/members/me", a, method="DELETE"), 409)
     expect("member cannot remove someone else", call(args.chat_url,
@@ -195,6 +212,8 @@ def main():
            path + f"/members/{newcomer}", a, method="DELETE"), 204)
     expect("removed member cannot read history", call(args.chat_url, path + "/messages", c), 403)
     expect("removed member cannot read summaries", call(args.chat_url, path + "/summaries", c), 403)
+    expect("removed member cannot use Agent", call(args.chat_url, path + "/agent/ask", c,
+           {"question": "会议说了什么"}), 403)
     if summary_id is not None:
         expect("removed member cannot inspect summary sources",
                call(args.chat_url, source_path, c), 403)
@@ -206,6 +225,9 @@ def main():
            {"friendIds": [newcomer]}), 200)
     rejoined = expect("rejoined member history", call(args.chat_url, path + "/messages", c), 200)
     check(not rejoined["messages"], "rejoined member can read pre-rejoin messages")
+    if args.check_agent:
+        expect("rejoined member has no old Agent corpus", call(args.chat_url, path + "/agent/ask", c,
+               {"question": "会议说了什么"}), 400)
     rejoined_inbox = expect("rejoined member notices", call(args.chat_url, "/api/chats/notices", c), 200)
     check(not any(item["groupId"] == group_id for item in rejoined_inbox["items"]),
           "rejoined member can read pre-rejoin mention")
@@ -236,6 +258,8 @@ def main():
     print("      post-join caption visible; leave/removal revoke access and mentions; rejoin hides old content;"
           " ownership transfer and dissolution enforced"
           + ("; pre-join summary hidden" if summary_id else ""))
+    if args.check_agent:
+        print("      Agent RAG sources scoped to membership and join cursor; removed members denied")
     if not args.check_summary:
         print("Summary content boundary not exercised (use --check-summary with a local model).")
     print("Three disposable accounts remain in the local development database; the test group is dissolved.")

@@ -51,11 +51,13 @@ import {
   listGroups, loadGroupMessages,
   markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages, listGroupSummaries, generateGroupSummary,
   listGroupSummarySources, translateGroupMessage, type GroupChat, type GroupMessage, type GroupSummary, type SummarySource,
+  askGroupAgent, type GroupAgentAnswer,
 } from "./groupApi";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, getAlertKeywords, saveAlertKeywords, type MentionNotice } from "./noticeApi";
 import { listTasks, createTask, updateTaskDetails, completeTask, deleteTask, type PersonalTask, type TaskSource } from "./taskApi";
 import { syncForward } from "./incrementalSync";
 import { resumeCursor, savedCursor, saveCursor } from "./syncCursor";
+import { chinaDate, chinaDateTime, chinaMessageTime, chinaToday, parseServerTime } from "./chinaTime";
 import {
   localSpeechConstructor, localSpeechAvailability, installLocalSpeech,
   makeLocalRecognizer, readSpeechResults, type LocalRecognizer,
@@ -232,6 +234,11 @@ let summaryEvidenceSeq = 0;
 const summaryBusy = ref(false);
 const summaryError = ref("");
 let summarySeq = 0;
+const agentQuestion = ref("");
+const agentAnswer = ref<GroupAgentAnswer | null>(null);
+const agentError = ref("");
+const agentBusy = ref(false);
+let agentSeq = 0;
 const groupSyncCursor = ref<number | null>(null);
 const groupNextBeforeId = ref<number | null>(null);
 const groupBusy = ref(false);
@@ -322,6 +329,11 @@ watch(knownPeers, (peers) => {
   try { localStorage.setItem(peerCacheKey(currentAccount.value.id), JSON.stringify(peers)); } catch {}
 }, { deep: true });
 watch(activeId, () => {
+  agentSeq++;
+  agentQuestion.value = "";
+  agentAnswer.value = null;
+  agentError.value = "";
+  agentBusy.value = false;
   clearTranslationPreview();
   closeHistorySearch();
   closeMessageContext(false);
@@ -406,7 +418,7 @@ function renderMessage(m: DirectMessage | GroupMessage): Message {
     conversationId: activeId.value,
     senderId: m.senderId === currentAccount.value?.id ? selfId : `user-${m.senderId}`,
     text: m.recalledAt ? "消息已撤回" : m.body,
-    time: new Date(m.createdAt).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+    time: chinaMessageTime(m.createdAt),
     kind: !m.recalledAt && "groupId" in m && m.kind === "CAPTION" ? "voice" : "text",
     recalled: !!m.recalledAt,
     createdAt: m.createdAt,
@@ -590,6 +602,31 @@ async function createGroupSummary() {
       summaryError.value = error instanceof Error ? error.message : "摘要生成失败";
   } finally {
     if (sequence === summarySeq) summaryBusy.value = false;
+  }
+}
+async function askAgent() {
+  const groupId = serverGroupId(activeId.value);
+  const accountId = currentAccount.value?.id;
+  const question = agentQuestion.value.trim();
+  if (!groupId || !accountId || agentBusy.value) return;
+  if (question.length < 2 || question.length > 300) {
+    agentError.value = "问题应为 2 到 300 个字符";
+    return;
+  }
+  const sequence = ++agentSeq;
+  const conversationId = activeId.value;
+  agentBusy.value = true;
+  agentAnswer.value = null;
+  agentError.value = "";
+  try {
+    const result = await askGroupAgent(groupId, question);
+    if (sequence === agentSeq && currentAccount.value?.id === accountId && activeId.value === conversationId)
+      agentAnswer.value = result;
+  } catch (error) {
+    if (sequence === agentSeq && currentAccount.value?.id === accountId && activeId.value === conversationId)
+      agentError.value = error instanceof Error ? error.message : "Agent 问答失败";
+  } finally {
+    if (sequence === agentSeq) agentBusy.value = false;
   }
 }
 function person(id: string): Person {
@@ -828,6 +865,10 @@ function forgetGroup(groupId: number) {
   serverGroups.value = serverGroups.value.filter((group) => group.id !== groupId);
   mentionNotices.value = mentionNotices.value.filter((notice) => notice.groupId !== groupId);
   if (serverGroupId(activeId.value) === groupId) {
+    agentSeq++;
+    agentAnswer.value = null;
+    agentError.value = "";
+    agentBusy.value = false;
     chatSeq++;
     summarySeq++;
     closeHistorySearch();
@@ -889,6 +930,12 @@ function mergeGroup(incoming: GroupMessage[]) {
   groupMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
 }
 function applyGroupRecall(recall: MessageRecall) {
+  if (agentAnswer.value?.sources.some((source) => source.id === recall.messageId)) {
+    agentSeq++;
+    agentAnswer.value = null;
+    agentBusy.value = false;
+    agentError.value = "引用的消息已撤回，请重新提问";
+  }
   if (translationPreview.value?.messageId === recall.messageId ||
       translationBusy.value === `group-message-${recall.messageId}`) clearTranslationPreview();
   groupRecalled.set(recall.messageId, recall.recalledAt);
@@ -1172,10 +1219,27 @@ async function requestCode(
       );
     const contact = normalizeContact(type, raw);
     const response = await sendCode(purpose, type, contact);
+    const stillCurrent = slot === "phone"
+      ? authMode.value === "register" && registerStep.value === "verify" &&
+        pendingRegistration.value?.phone === contact
+      : slot === "email"
+        ? authMode.value === "register" && registerStep.value === "verify" &&
+          pendingRegistration.value?.email === contact
+        : slot === "bind"
+          ? missingContact.value === type && normalizeContact(type, bindValue.value) === contact
+          : authMode.value === (purpose === "reset" ? "reset" : "login") &&
+            contactType.value === type && normalizeContact(type, authIdentifier.value) === contact;
+    if (!stillCurrent) return;
     resendAt.value[`${purpose}:${type}:${contact}`] =
       Date.now() + response.retryAfterSeconds * 1000;
+    if (response.devCode && /^[0-9]{6}$/.test(response.devCode)) {
+      if (slot === "phone") authPhoneCode.value = response.devCode;
+      else if (slot === "email") authEmailCode.value = response.devCode;
+      else if (slot === "bind") bindCode.value = response.devCode;
+      else authLoginCode.value = response.devCode;
+    }
     codeHints.value[slot] = response.devCode
-      ? `本地开发验证码：${response.devCode}（${Math.ceil(response.expiresInSeconds / 60)} 分钟有效；不会真实发送）`
+      ? `本地开发验证码已自动填入（${Math.ceil(response.expiresInSeconds / 60)} 分钟有效；不会真实发送）`
       : "验证码已发送";
     codeTick.value = Date.now();
   } catch (error) {
@@ -1190,6 +1254,11 @@ async function requestCode(
   }
 }
 function applyAccount(account: Account) {
+  agentSeq++;
+  agentAnswer.value = null;
+  agentQuestion.value = "";
+  agentError.value = "";
+  agentBusy.value = false;
   clearTranslationPreview();
   chatSocket?.close();
   pendingRealtimeRefresh = false;
@@ -1440,6 +1509,11 @@ async function submitAuth() {
   }
 }
 async function signOut() {
+  agentSeq++;
+  agentAnswer.value = null;
+  agentQuestion.value = "";
+  agentError.value = "";
+  agentBusy.value = false;
   try {
     await logout();
   } catch (error) {
@@ -1675,7 +1749,7 @@ function mergeContext(incoming: Array<DirectMessage | GroupMessage>) {
 function canRecallMessage(m: Message) {
   return m.senderId === selfId && !m.recalled && !!m.createdAt &&
     /^(server|group)-message-[1-9]\d*$/.test(m.id) &&
-    Date.now() - new Date(m.createdAt).getTime() < 2 * 60_000;
+    Date.now() - parseServerTime(m.createdAt).getTime() < 2 * 60_000;
 }
 async function recallVisibleMessage(m: Message) {
   const peerId = directPeer(activeId.value);
@@ -2736,7 +2810,7 @@ onBeforeUnmount(() => {
           }}
         </button>
         <p class="auth-disclaimer">
-          本地开发模式会显示后端生成的验证码，不发送短信或邮件。请使用测试联系方式与密码。
+          本地开发模式会自动填入后端生成的验证码，不发送短信或邮件。请使用测试联系方式与密码。
         </p>
       </form>
     </div>
@@ -2932,7 +3006,7 @@ onBeforeUnmount(() => {
             <p v-if="!historySearching && !historyResults.length && !historySearchError" class="history-empty">没有找到包含“{{ historyTerm }}”的消息</p>
             <article v-for="m in historyResults" :key="m.id" class="history-result">
               <div><strong>{{ m.senderId === currentAccount?.id ? "我" : person(`user-${m.senderId}`).name }}</strong>
-                <time>{{ new Date(m.createdAt).toLocaleString("zh-CN") }}</time></div>
+                <time>{{ chinaDateTime(m.createdAt) }}</time></div>
               <p>{{ m.body }}</p>
               <button type="button" class="text-button" @click="openMessageContext(m)">查看上下文</button>
             </article>
@@ -3164,6 +3238,23 @@ onBeforeUnmount(() => {
               <AppIcon name="alignLeft" :size="17" /><strong>对话摘要</strong>
             </div>
             <template v-if="serverGroupId(activeId)">
+              <div class="agent-ask">
+                <div class="assist-label"><AppIcon name="sparkles" :size="17" /><strong>群聊 Agent 问答</strong></div>
+                <p class="assist-description">仅检索你有权查看的最近 30 条消息；本地模型生成回答，可核对引用。不会自动创建待办。</p>
+                <label for="agent-question">向当前讨论室提问</label>
+                <input id="agent-question" v-model="agentQuestion" class="agent-question" maxlength="300"
+                  placeholder="例如：下次会议要准备什么？" @keydown.enter.prevent="askAgent" />
+                <button class="soft-button" type="button" :disabled="agentBusy || agentQuestion.trim().length < 2"
+                  @click="askAgent">{{ agentBusy ? "检索并回答中…" : "提问" }}</button>
+                <p v-if="agentError" class="error-text" role="alert">{{ agentError }}</p>
+                <div v-if="agentAnswer" class="summary-card">
+                  <p class="group-summary-text">{{ agentAnswer.answer }}</p>
+                  <strong v-if="agentAnswer.sources.length">可核对的来源</strong>
+                  <div v-for="source in agentAnswer.sources" :key="source.id" class="summary-evidence-row">
+                    <small>消息 {{ source.id }}</small><p>{{ source.body }}</p>
+                  </div>
+                </div>
+              </div>
               <p class="assist-description">
                 只使用加入后可见的群消息，由本机模型生成；摘要仅对有权查看这些消息的群成员开放。
               </p>
@@ -3178,7 +3269,7 @@ onBeforeUnmount(() => {
                 <p v-if="!groupSummaries.length">本群暂无你有权查看的摘要。</p>
                 <article v-for="item in groupSummaries" :key="item.id" class="group-summary-item">
                   <small>消息 {{ item.firstMessageId }}–{{ item.lastMessageId }} ·
-                    {{ new Date(item.createdAt).toLocaleString("zh-CN") }}</small>
+                    {{ chinaDateTime(item.createdAt) }}</small>
                   <p class="group-summary-text">{{ item.content }}</p>
                   <button type="button" class="text-button" :aria-expanded="summaryEvidenceFor === item.id"
                     :aria-label="`核对摘要 ${item.id} 的原文`" @click="toggleSummaryEvidence(item.id)">
@@ -3191,7 +3282,7 @@ onBeforeUnmount(() => {
                       <p>生成时覆盖的可见消息（最多 30 条），请对照检查结论和待办。</p>
                       <div v-for="source in summaryEvidence" :key="source.id" class="summary-evidence-row">
                         <small>消息 {{ source.id }} · 用户 {{ source.senderId }} ·
-                          {{ new Date(source.createdAt).toLocaleString("zh-CN") }} ·
+                          {{ chinaDateTime(source.createdAt) }} ·
                           {{ source.kind === "CAPTION" ? "字幕" : "文字" }}</small>
                         <p>{{ source.body }}</p>
                       </div>
@@ -3409,7 +3500,7 @@ onBeforeUnmount(() => {
               >
               <p>{{ r.note }}</p>
               <small
-                >{{ new Date(r.createdAt).toLocaleString("zh-CN") }} ·
+                >{{ chinaDateTime(r.createdAt) }} ·
                 {{
                   r.state === "PENDING"
                     ? "等待你处理"
@@ -3457,7 +3548,7 @@ onBeforeUnmount(() => {
               >
               <p>{{ r.note }}</p>
               <small
-                >{{ new Date(r.createdAt).toLocaleString("zh-CN") }} ·
+                >{{ chinaDateTime(r.createdAt) }} ·
                 {{
                   r.state === "PENDING"
                     ? "等待回应"
@@ -3506,7 +3597,7 @@ onBeforeUnmount(() => {
             ><span class="notice-body"
               ><strong>{{ person(`user-${n.senderId}`).name }} 在「{{ n.groupName }}」中{{ n.kind === 'KEYWORD' ? '发了关注词消息' : '提到了你' }}</strong
               ><span>{{ n.body.slice(0, 100) }}</span></span
-            ><small>{{ new Date(n.createdAt).toLocaleString("zh-CN") }}</small
+            ><small>{{ chinaDateTime(n.createdAt) }}</small
             ><span v-if="!n.readAt" class="notice-dot" />
           </button>
           <p v-if="!mentionNotices.length && !noticeError" class="empty-list">还没有点名提醒</p>
@@ -3563,10 +3654,10 @@ onBeforeUnmount(() => {
               /><span class="custom-check"
                 ><AppIcon name="check" :size="13" /></span
               ><span>{{ t.title }}</span></label
-            ><span v-if="t.dueDate" :class="['due', { 'task-overdue': !t.completed && t.dueDate < new Date().toLocaleDateString('sv-SE') }]">
-              截止 {{ t.dueDate }}<span v-if="!t.completed && t.dueDate < new Date().toLocaleDateString('sv-SE')"> · 已逾期</span>
+            ><span v-if="t.dueDate" :class="['due', { 'task-overdue': !t.completed && t.dueDate < chinaToday() }]">
+              截止 {{ t.dueDate }}<span v-if="!t.completed && t.dueDate < chinaToday()"> · 已逾期</span>
             </span
-            ><span v-else class="due">创建 {{ new Date(t.createdAt).toLocaleDateString("zh-CN") }}</span
+            ><span v-else class="due">创建 {{ chinaDate(t.createdAt) }}</span
             ><button type="button" class="text-button" :disabled="taskSaving" :aria-label="`编辑 ${t.title}`"
               @click="startTaskEdit(t)">编辑</button
             ><button v-if="t.sourceGroupId && t.sourceMessageId" type="button" class="text-button"
@@ -3692,7 +3783,7 @@ onBeforeUnmount(() => {
               {{ bindBusy ? "处理中…" : "关联到当前账号" }}
             </button>
             <small
-              >本地开发模式由后端返回验证码；短信和邮件发送尚未接入。</small
+              >本地开发模式会自动填入验证码；短信和邮件发送尚未接入。</small
             >
           </form>
           <p v-if="bindSuccess" class="success-text" role="status">
@@ -3921,7 +4012,7 @@ onBeforeUnmount(() => {
         </div>
         <template v-if="modal === 'friend'"
           ><p class="modal-lead">
-            输入对方已绑定的手机号或唯一账号，直接发送申请。为保护隐私，不显示查询结果。
+            输入对方已绑定的手机号或唯一账号发送申请。手机号未关联账号时会提示，不展示对方资料。
           </p>
           <div class="auth-tabs" role="group" aria-label="查找方式">
             <button

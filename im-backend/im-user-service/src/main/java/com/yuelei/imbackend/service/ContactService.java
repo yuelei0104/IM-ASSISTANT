@@ -70,7 +70,11 @@ public class ContactService {
         inviteLimits.check(me);
         UserAccount target = hasPhone
                 ? users.byPhone(normalized) : users.byHandle(normalized);
-        // Keep the response identical for unknown, self, already-friends and duplicate invitations.
+        // A phone invitation should tell its authenticated sender when the
+        // number is not bound to an account. Keep handle lookups and the other
+        // no-op outcomes identical to the usual accepted response.
+        if (target == null && hasPhone)
+            throw new AuthException(HttpStatus.NOT_FOUND, "该账号不存在");
         if (target == null || target.id() == me) return;
         long low = Math.min(me, target.id()), high = Math.max(me, target.id());
         if (contacts.friendshipCount(low, high) > 0) return;

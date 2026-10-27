@@ -91,9 +91,21 @@ class ContactServiceTest {
     }
 
     @Test
-    void unknownPhoneAndDuplicateInvitationHaveTheSameOutcome() {
+    void unknownPhoneReturnsNotFoundWithoutCreatingAnInvitation() {
         when(sessions.requireUserId("Bearer token")).thenReturn(10L);
-        service.invite("Bearer token", new Invite(null, "13800138000", "hi"));
+        AuthException error = assertThrows(AuthException.class,
+                () -> service.invite("Bearer token", new Invite(null, "13800138000", "hi")));
+        assertEquals(org.springframework.http.HttpStatus.NOT_FOUND, error.status());
+        assertEquals("该账号不存在", error.getMessage());
+        verify(inviteLimits).check(10L);
+        verify(users).byPhone("13800138000");
+        verify(contacts, never()).invite(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    void unknownHandleAndExistingFriendKeepTheirAcceptedOutcome() {
+        when(sessions.requireUserId("Bearer token")).thenReturn(10L);
+        service.invite("Bearer token", new Invite("missing_25", null, "hi"));
         when(users.byPhone("13800138000"))
                 .thenReturn(new UserAccount(25L, "friend", "friend_25", "13800138000", null, "hash"));
         when(contacts.friendshipCount(10L, 25L)).thenReturn(1L);

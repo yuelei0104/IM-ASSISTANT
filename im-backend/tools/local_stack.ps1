@@ -1,0 +1,334 @@
+param(
+    [Parameter(Position = 0)]
+    [ValidateSet('start', 'status', 'smoke', 'stop')]
+    [string]$Action = 'status',
+    [switch]$Build,
+    [switch]$StopInfrastructure,
+    [ValidateRange(1024, 65535)]
+    [int]$WebPort = 5173
+)
+
+# Run on Windows PowerShell 5.1 or PowerShell 7 from any working directory.
+# Only the five application processes recorded in .local-stack/state.json are stopped.
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$backend = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$repository = (Resolve-Path (Join-Path $backend '..')).Path
+$web = Join-Path $repository 'im-web'
+$stateDirectory = Join-Path $backend '.local-stack'
+$stateFile = Join-Path $stateDirectory 'state.json'
+
+function Read-State {
+    if (-not (Test-Path $stateFile)) { return $null }
+    return Get-Content $stateFile -Raw | ConvertFrom-Json
+}
+
+function Save-State($state) {
+    New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
+    $state | ConvertTo-Json -Depth 5 | Set-Content -Path $stateFile -Encoding UTF8
+}
+
+function Owned-Process($entry) {
+    $process = Get-Process -Id $entry.Id -ErrorAction SilentlyContinue
+    if ($null -eq $process) { return $null }
+    try {
+        if ($process.ProcessName -ne $entry.Name -or
+            $process.StartTime.ToUniversalTime().Ticks -ne [long]$entry.StartTicks) { return $null }
+        $command = Get-CimInstance Win32_Process -Filter "ProcessId = $($entry.Id)" -ErrorAction Stop
+        if ($null -eq $command -or $command.CommandLine -notlike "*$($entry.Marker)*") { return $null }
+        return $process
+    } catch { return $null }
+}
+
+function Stop-Owned($state) {
+    if ($null -eq $state) { return }
+    $entries = @($state.Processes)
+    [array]::Reverse($entries)
+    foreach ($entry in $entries) {
+        $process = Owned-Process $entry
+        if ($null -ne $process) {
+            Stop-Process -Id $entry.Id -ErrorAction Stop
+            Write-Host "Stopped $($entry.Service) (PID $($entry.Id))"
+        } else {
+            Write-Host "Skipped $($entry.Service): process ended or no longer matches recorded identity"
+        }
+    }
+}
+
+function Check-Health([string]$url) {
+    try {
+        $response = Invoke-RestMethod -Uri $url -TimeoutSec 3
+        return $response.status -eq 'UP'
+    } catch { return $false }
+}
+
+function Wait-Health([string]$label, [int]$port, $entry) {
+    $deadline = (Get-Date).AddSeconds(120)
+    while ((Get-Date) -lt $deadline) {
+        if ($null -eq (Owned-Process $entry)) { throw "$label exited; inspect $stateDirectory\$label.err.log" }
+        $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $_.OwningProcess -eq $entry.Id -and $_.LocalAddress -eq '127.0.0.1' }
+        if ($listener -and (Check-Health "http://127.0.0.1:$port/actuator/health")) {
+            Write-Host "$label ready on 127.0.0.1:$port"
+            return
+        }
+        Start-Sleep -Seconds 2
+    }
+    throw "$label health timed out; inspect $stateDirectory\$label.err.log"
+}
+
+function Wait-Web([int]$port, $entry) {
+    $deadline = (Get-Date).AddSeconds(45)
+    while ((Get-Date) -lt $deadline) {
+        if ($null -eq (Owned-Process $entry)) { throw "web exited; inspect $stateDirectory\web.err.log" }
+        try {
+            $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/" -TimeoutSec 3
+            $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+                Where-Object { $_.OwningProcess -eq $entry.Id -and $_.LocalAddress -eq '127.0.0.1' }
+            if ($listener -and $response.StatusCode -eq 200 -and $response.Content -like '*id="app"*') {
+                Write-Host "web ready at http://127.0.0.1:$port/"
+                return
+            }
+        } catch { }
+        Start-Sleep -Seconds 2
+    }
+    throw "web health timed out; inspect $stateDirectory\web.err.log"
+}
+
+function Read-AppPassword {
+    $envFile = Join-Path $backend '.env'
+    if (-not (Test-Path $envFile)) { throw "Create $envFile from .env.example first" }
+    foreach ($line in Get-Content $envFile) {
+        if ($line -match '^\s*IM_MYSQL_PASSWORD\s*=\s*(.*?)\s*$') {
+            $value = $Matches[1]
+            if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or
+                ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
+            if ([string]::IsNullOrWhiteSpace($value)) { break }
+            return $value
+        }
+    }
+    throw 'IM_MYSQL_PASSWORD is missing in im-backend/.env'
+}
+
+function Wait-Infrastructure([int]$timeoutSeconds = 150) {
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        # A starting broker can fail readiness commands several times. Native
+        # stderr must not be promoted to a terminating PowerShell error here.
+        $previousPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            # mysqladmin checks that the server accepts connections without
+            # passing a password or nested shell quoting through PowerShell.
+            $null = & docker compose --profile kafka exec -T mysql mysqladmin ping --silent 2>&1
+            $mysqlReady = $LASTEXITCODE -eq 0
+            $reply = & docker compose --profile kafka exec -T redis redis-cli ping 2>&1
+            $redisReady = $LASTEXITCODE -eq 0 -and (@($reply) -contains 'PONG')
+            $null = & docker compose --profile kafka exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list 2>&1
+            $kafkaReady = $LASTEXITCODE -eq 0
+        } finally { $ErrorActionPreference = $previousPreference }
+        if ($mysqlReady -and $redisReady -and $kafkaReady) { return }
+        Start-Sleep -Seconds 3
+    }
+    throw "Infrastructure not ready: mysql=$mysqlReady redis=$redisReady kafka=$kafkaReady; run docker compose --profile kafka ps --all and logs"
+}
+
+function Launch([string]$service, [string]$executable, [string[]]$arguments,
+                [string]$workingDirectory, [string]$marker, $state) {
+    $stdout = Join-Path $stateDirectory "$service.log"
+    $stderr = Join-Path $stateDirectory "$service.err.log"
+    $process = Start-Process -FilePath $executable -ArgumentList $arguments -WorkingDirectory $workingDirectory `
+        -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
+    $entry = [pscustomobject]@{
+        Service = $service
+        Id = $process.Id
+        Name = $process.ProcessName
+        StartTicks = $process.StartTime.ToUniversalTime().Ticks
+        Marker = $marker
+    }
+    $state.Processes += $entry
+    Save-State $state
+    return $entry
+}
+
+function Check-WebSocket([string]$url, [string]$label, [int]$retrySeconds = 0) {
+    $deadline = (Get-Date).AddSeconds($retrySeconds)
+    do {
+        $socket = New-Object System.Net.WebSockets.ClientWebSocket
+        $timeout = New-Object System.Threading.CancellationTokenSource
+        $timeout.CancelAfter(5000)
+        $failure = $null
+        try {
+            $socket.ConnectAsync([uri]$url, $timeout.Token).GetAwaiter().GetResult() | Out-Null
+            Write-Host "$label WebSocket upgrade: OK (unauthenticated handshake only)"
+            return
+        } catch {
+            $failure = $_.Exception.GetBaseException().Message
+        } finally {
+            $socket.Dispose()
+            $timeout.Dispose()
+        }
+        if ((Get-Date) -ge $deadline) { throw "$label WebSocket handshake failed: $failure" }
+        Start-Sleep -Seconds 2
+    } while ($true)
+}
+
+function Smoke([int]$port) {
+    Push-Location $backend
+    try { Wait-Infrastructure 12 } finally { Pop-Location }
+    Write-Host 'MySQL, Redis and Kafka: ready'
+    foreach ($item in @(
+        [pscustomobject]@{ Name = 'user'; Port = 8081 }
+        [pscustomobject]@{ Name = 'chat-a'; Port = 8082 }
+        [pscustomobject]@{ Name = 'chat-b'; Port = 8083 }
+        [pscustomobject]@{ Name = 'gateway'; Port = 8080 }
+    )) {
+        if (-not (Check-Health "http://127.0.0.1:$($item.Port)/actuator/health")) {
+            throw "$($item.Name) health is not UP on $($item.Port)"
+        }
+        Write-Host "$($item.Name) health: UP"
+    }
+    $page = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/" -TimeoutSec 5
+    if ($page.StatusCode -ne 200 -or $page.Content -notlike '*id="app"*') { throw 'Web page did not load' }
+    try {
+        $null = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/api/auth/me" -TimeoutSec 5
+        throw 'Unauthenticated /api/auth/me unexpectedly succeeded'
+    } catch [System.Net.WebException] {
+        $response = $_.Exception.Response
+        if ($null -eq $response -or [int]$response.StatusCode -ne 401 -or
+            $response.ContentType -notlike 'application/json*') { throw 'Web to gateway to user proxy failed' }
+        Write-Host 'Web to gateway to user route: HTTP 401 JSON (expected without token)'
+    }
+    Check-WebSocket 'ws://127.0.0.1:8082/api/chats/ws' 'chat-a direct'
+    # Gateway health can turn UP before the cluster load balancer has made its
+    # first healthy-instance selection. Retry only these routing handshakes.
+    Check-WebSocket 'ws://127.0.0.1:8080/api/chats/ws' 'gateway' 30
+    Check-WebSocket "ws://127.0.0.1:$port/api/chats/ws" 'web proxy' 30
+    Write-Host 'PASS: local HTTP and WebSocket routing; login and messaging require browser verification'
+}
+
+switch ($Action) {
+    'start' {
+        $old = Read-State
+        if ($null -ne $old -and @($old.Processes | Where-Object { Owned-Process $_ }).Count -gt 0) {
+            throw 'A recorded local stack is still running; use status or stop first'
+        }
+        foreach ($port in @(8080, 8081, 8082, 8083)) {
+            $inUse = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+                Where-Object { $_.LocalAddress -eq '127.0.0.1' -or $_.LocalAddress -eq '::1' }
+            if ($inUse) { throw "Port $port is already in use on loopback by PID $($inUse[0].OwningProcess); close that process first" }
+        }
+        $env:IM_MYSQL_PASSWORD = Read-AppPassword
+        $env:IM_KAFKA_ENABLED = 'true'
+        $env:IM_KAFKA_BOOTSTRAP = '127.0.0.1:19092'
+        $env:VITE_IM_GATEWAY_URL = 'http://127.0.0.1:8080'
+        if ($Build) {
+            Push-Location $backend
+            try { & (Join-Path $backend 'mvnw.cmd') -pl im-user-service,im-chat-service,im-gateway -am package
+                if ($LASTEXITCODE -ne 0) { throw 'Maven build failed' }
+            } finally { Pop-Location }
+            Push-Location $web
+            try {
+                & npm.cmd ci
+                if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+                & npm.cmd run build
+                if ($LASTEXITCODE -ne 0) { throw 'Web build failed' }
+            } finally { Pop-Location }
+        }
+        $jars = @{
+            user = Join-Path $backend 'im-user-service\target\im-user-service-0.0.1-SNAPSHOT.jar'
+            'chat-a' = Join-Path $backend 'im-chat-service\target\im-chat-service-0.0.1-SNAPSHOT.jar'
+            gateway = Join-Path $backend 'im-gateway\target\im-gateway-0.0.1-SNAPSHOT.jar'
+        }
+        foreach ($jar in $jars.Values) { if (-not (Test-Path $jar)) { throw "Missing $jar; run start -Build" } }
+        $vite = Join-Path $web 'node_modules\vite\bin\vite.js'
+        if (-not (Test-Path $vite)) { throw "Missing $vite; run start -Build" }
+        $java = (Get-Command java.exe -ErrorAction Stop).Source
+        $node = (Get-Command node.exe -ErrorAction Stop).Source
+        Push-Location $backend
+        try {
+            & docker compose --profile kafka up -d mysql redis kafka
+            if ($LASTEXITCODE -ne 0) { throw 'Docker Compose up failed' }
+            Wait-Infrastructure
+            & docker compose --profile kafka exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --create --if-not-exists --topic im.chat.notifications.v1 --partitions 6 --replication-factor 1
+            if ($LASTEXITCODE -ne 0) { throw 'Kafka topic creation failed' }
+        } finally { Pop-Location }
+        New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
+        $state = [pscustomobject]@{ WebPort = $WebPort; Processes = @() }
+        Save-State $state
+        try {
+            $jar = $jars.user
+            $entry = Launch 'user' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev') $backend $jar $state
+            Wait-Health 'user' 8081 $entry
+            $jar = $jars['chat-a']
+            $entry = Launch 'chat-a' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8082') $backend $jar $state
+            Wait-Health 'chat-a' 8082 $entry
+            $entry = Launch 'chat-b' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8083') $backend $jar $state
+            Wait-Health 'chat-b' 8083 $entry
+            $jar = $jars.gateway
+            $entry = Launch 'gateway' $java @('-jar', "`"$jar`"", '--spring.profiles.active=cluster') $backend $jar $state
+            Wait-Health 'gateway' 8080 $entry
+            # Docker Desktop or another application can acquire the web port
+            # while infrastructure and Java services are starting. Choose it
+            # immediately before launching Vite, including wildcard listeners.
+            $candidates = if ($PSBoundParameters.ContainsKey('WebPort')) { @($WebPort) } else { @(5173..5182) }
+            $selectedPort = $null
+            foreach ($candidate in $candidates) {
+                $occupied = @(Get-NetTCPConnection -LocalPort $candidate -State Listen -ErrorAction SilentlyContinue |
+                    Where-Object { $_.LocalAddress -in @('127.0.0.1', '::1', '0.0.0.0', '::') })
+                if ($occupied.Count -eq 0) { $selectedPort = $candidate; break }
+            }
+            if ($null -eq $selectedPort) {
+                if ($PSBoundParameters.ContainsKey('WebPort')) {
+                    throw "Web port $WebPort is already in use; choose a free -WebPort"
+                }
+                throw 'No free web port from 5173 to 5182; close another local web server'
+            }
+            $WebPort = [int]$selectedPort
+            $state.WebPort = $WebPort
+            Save-State $state
+            $entry = Launch 'web' $node @("`"$vite`"", '--host', '127.0.0.1', '--port', "$WebPort", '--strictPort') $web $vite $state
+            Wait-Web $WebPort $entry
+        } catch {
+            Write-Host "Startup failed: $($_.Exception.Message)"
+            Stop-Owned $state
+            Remove-Item $stateFile -ErrorAction SilentlyContinue
+            throw
+        }
+        try { Smoke $WebPort } catch {
+            Write-Host 'The stack is still running for diagnosis; use status, smoke and stop when ready'
+            throw
+        }
+    }
+    'status' {
+        $state = Read-State
+        if ($null -eq $state) { Write-Host 'No local stack recorded'; break }
+        foreach ($entry in $state.Processes) {
+            $process = Owned-Process $entry
+            $health = if ($null -eq $process) { 'not owned/running' } elseif ($entry.Service -eq 'web') { 'check with smoke' } else {
+                $port = switch ($entry.Service) { user { 8081 } 'chat-a' { 8082 } 'chat-b' { 8083 } gateway { 8080 } }
+                if (Check-Health "http://127.0.0.1:$port/actuator/health") { 'UP' } else { 'DOWN' }
+            }
+            Write-Host "$($entry.Service): PID $($entry.Id), owned=$($null -ne $process), health=$health"
+        }
+        Write-Host "Web URL: http://127.0.0.1:$($state.WebPort)/"
+    }
+    'smoke' {
+        $state = Read-State
+        $port = if ($null -ne $state) { [int]$state.WebPort } else { $WebPort }
+        Smoke $port
+    }
+    'stop' {
+        $state = Read-State
+        Stop-Owned $state
+        Remove-Item $stateFile -ErrorAction SilentlyContinue
+        if ($StopInfrastructure) {
+            Push-Location $backend
+            try {
+                & docker compose --profile kafka stop kafka redis mysql
+                if ($LASTEXITCODE -ne 0) { throw 'Docker Compose stop failed' }
+            } finally { Pop-Location }
+        }
+        Write-Host 'Application processes stopped; Docker data volumes retained'
+    }
+}

@@ -14,6 +14,69 @@ docker compose exec mysql mysql -uim_user -p im_assistant
 Enter `IM_MYSQL_PASSWORD` from `.env` when MySQL prompts for a password.
 Redis responds with `PONG`. Leave the MySQL shell with `exit`.
 
+## Repeatable Windows local stack
+
+For the full local web flow (one user service, two chat nodes, cluster gateway,
+Vite and the existing Docker infrastructure), use the PowerShell launcher from
+`D:\im-assistant\im-backend`. This is a **loopback development deployment**, not
+an internet-facing production setup. Install Docker Desktop, Java 21 and Node 22
+before starting (Python 3 is needed for the separate probes). Copy `.env.example` to `.env` and set both MySQL
+passwords; the launcher reads the app password without printing it.
+
+```powershell
+Set-Location D:\im-assistant\im-backend
+.\tools\local_stack.ps1 start -Build
+.\tools\local_stack.ps1 status
+.\tools\local_stack.ps1 smoke
+```
+
+`-Build` runs the Maven package/tests and `npm ci`/frontend build before starting
+anything. Subsequent runs can use `start` alone when the jars and dependencies
+have not changed. Open `http://127.0.0.1:5173/` and register using the
+development code shown in the UI. The launcher starts MySQL, Redis and Kafka
+with Compose, checks their readiness, creates the notification topic if needed,
+then starts 8081, 8082, 8083, 8080 and Vite in that order. It refuses a backend
+port already owned on loopback. After Docker and Java are ready it picks the
+first free web port from 5173 through 5182 (including Docker Desktop port
+forwarding); `-WebPort 5174` requests exactly that port. Use the URL printed by
+`start` or `status`. It never kills a process merely because it uses one of these
+ports. If an application fails to start, it stops only the application
+processes it launched and leaves the Docker containers and their data volumes
+intact. If an application starts but the final smoke check fails, the stack
+stays running for diagnosis; use `status` and then `stop` when finished.
+
+Database connections for the user and chat services use a UTC MySQL session.
+API timestamps without an offset are UTC; the web app renders messages,
+requests, notices and tasks in China Standard Time (`Asia/Shanghai`). An
+explicit offset in a timestamp takes precedence. Calendar-only task due dates
+use the China Standard Time day boundary.
+
+`smoke` checks MySQL, Redis and Kafka, all four Actuator health endpoints, the web page, an expected
+unauthenticated JSON response through web → gateway → user service, and a
+WebSocket handshakes directly with chat, then through the gateway and web proxy.
+The two routed handshakes retry for at most 30 seconds while the gateway checks
+the chat nodes; a persistent failure
+still reports the failing hop and leaves the processes running. It does not
+authenticate a user, send a message, or prove cross-node delivery. Run `cluster_probe.py` and
+`kafka_outbox_probe.py` separately for those end-to-end checks. Process IDs and
+stdout/stderr logs live in ignored `.local-stack`; `stop` verifies both start
+time and command line before stopping a recorded process, so reused PIDs are
+not killed. To stop everything started by the script:
+
+```powershell
+.\tools\local_stack.ps1 stop
+# Also pause the project's MySQL, Redis and Kafka containers (keeps their data):
+.\tools\local_stack.ps1 stop -StopInfrastructure
+```
+
+Keep local Ollama on Windows if you want summaries/translation: download
+`qwen3:4b` or set `$env:IM_SUMMARY_MODEL` to another locally available model
+in the same PowerShell session before `start`. The two chat processes inherit
+the setting and call 127.0.0.1:11434. If the selected model is absent, normal
+messaging still runs and model endpoints return a clear 503. Do not expose the
+`dev` verification codes or management endpoints
+outside your machine.
+
 For backend applications running directly on Windows, use MySQL at
 `127.0.0.1:13307` (database `im_assistant`, user `im_user`) and Redis at
 `127.0.0.1:16380`. The MySQL database and user are initialized only when the
@@ -87,11 +150,13 @@ The `Authorization: Bearer <token>` header is required for the following
   `nextCursor`; `GET /requests?beforeId=<id>&limit=50` pages requests by ID.
 - `POST /requests` accepts `{ "handle": "other_user", "note": "你好" }` or
   `{ "phone": "13800138000", "note": "你好" }`; provide exactly one identifier.
-  It returns HTTP 202 for unknown, self, already-friend and accepted requests
-  as well as successfully queued requests. Each user may attempt up to 20
-  invitations per day. Lookup endpoints that exposed profiles by phone/handle
-  have been removed. The sender's own requests list still shows real pending
-  requests, so this is abuse reduction rather than a complete privacy guarantee.
+  An unbound phone returns HTTP 404 with `该账号不存在`; an unknown handle,
+  self-invitation, existing friendship or duplicate request returns HTTP 202,
+  as does a queued invitation. Each authenticated user may attempt up to 20
+  invitations per day, including unknown phones. Lookup endpoints that exposed
+  profiles by phone/handle have been removed. The sender's own requests list
+  still shows real pending requests; revealing unbound phone numbers is a
+  deliberate user-facing tradeoff rather than a complete privacy guarantee.
 - `POST /requests/{id}/accept`, `/reject`, `/withdraw` handle a pending request.
 - `DELETE /{friendId}` removes an established friendship.
 
@@ -340,15 +405,20 @@ The summary insert also checks membership and the join cursor in the same SQL
 statement, covering a membership change after the local model returns.
 
 Generation requires a locally running Ollama with a locally downloaded model.
-For example, run `ollama pull qwen3:4b`, then set
-`$env:IM_SUMMARY_MODEL = "qwen3:4b"` in the chat service PowerShell window
-before starting the service. By default no model is configured and generation
-returns 503 with an explanation. The endpoint is fixed to
+For example, run `ollama pull qwen3:4b`. By default the summary uses
+`IM_SUMMARY_MODEL`, then `IM_AGENT_MODEL`, then `qwen3:4b`. Set an override
+in the chat-service PowerShell window before starting the service. The
+endpoint is fixed to
 `127.0.0.1:11434`; `IM_OLLAMA_PORT` may change the local port, but no
 remote model URL can be configured. The service sends only the current
 member's latest 30 eligible messages (each capped at 500 characters) to that
 local endpoint; model failures return a generic error without message text.
 Ensure the selected model runs locally rather than using Ollama cloud models.
+The summary prompt asks for only three concise fields: topic, decision and
+action item. A field without a clear basis becomes `未提及`. A response that
+contains only model self-analysis or does not follow this format is reduced to
+`未提及` fields before it can be saved; users can inspect the original messages
+to check omissions or any claim the model made.
 
 To check a generated summary against its inputs, a current group member can
 request `GET /api/chats/groups/{groupId}/summaries/{summaryId}/sources`.
@@ -361,6 +431,65 @@ summary for human review. This lets people spot omissions or unsupported
 claims; it does not automatically certify the model's accuracy. Run
 `python .\tools\group_privacy_probe.py --check-summary` with a local model
 after restarting chat-service to verify source visibility as well.
+
+### Local LangChain4j group Agent (opt-in)
+
+This is a bounded, private group-message RAG workflow, not an enterprise
+knowledge base. `POST /api/chats/groups/{groupId}/agent/ask` accepts
+`{"question":"下次会议需要准备什么？"}` and returns an answer plus the group
+message IDs and text used as checkable sources. The endpoint requires the
+caller's existing bearer session and group membership. It loads at most 30
+messages newer than that member's join cursor, excludes recalled messages,
+and truncates each input to 500 characters. It rechecks membership, join cursor
+and live source visibility **after** inference. The response is not stored and
+uses `Cache-Control: no-store`.
+
+LangChain4j embeds the permitted messages and question using a local Ollama
+embedding model, performs top-three vector retrieval in a **request-local**
+`InMemoryEmbeddingStore`, then uses a LangChain4j AI Service to answer. A
+single `@Tool` allows the model to inspect a message from that same authorized
+snapshot by ID. The tool has no write operations or access to other groups.
+Short acknowledgements are skipped; the response is limited to a concise answer
+and only the IDs the model cites from the authorized context. If the context
+does not answer the question, it returns a fixed insufficient-evidence answer
+with no citations. All messages sent to the model or inspected by the tool
+are rechecked after inference before returning a supported answer.
+When one short message explicitly matches the question but a small model
+omits the required citation format, the service can quote that exact message
+with its verified ID. It does not make this fallback for unrelated messages.
+There is no persistent or shared vector index, no PGVector/Milvus, no AI Kafka
+queue, no autonomous task creation, and no cross-request chat memory. Building
+the vectors again on each question makes this a small-group prototype rather
+than a large-corpus search service. Group text stays on local Ollama.
+
+To enable the feature, download a local embedding model in addition to the
+chat model, then stop and restart chat-service. With `local_stack.ps1`, set
+the variables in the **same PowerShell session** before `start -Build`:
+
+```powershell
+ollama pull bge-m3
+Set-Location D:\im-assistant\im-backend
+.\tools\local_stack.ps1 stop
+$env:IM_SUMMARY_MODEL = 'qwen3:4b'
+$env:IM_AGENT_MODEL = 'qwen3:4b'
+$env:IM_AGENT_EMBED_MODEL = 'bge-m3'
+.\tools\local_stack.ps1 start -Build
+```
+
+For a manually started chat-service, set the same variables in each chat node's
+PowerShell window **before** starting it. If the embedding model or chat model
+is missing, the Agent endpoint returns 503; normal messaging still works.
+`IM_AGENT_MODEL` defaults to `IM_SUMMARY_MODEL` and then `qwen3:4b`;
+`IM_AGENT_EMBED_MODEL` must still name a locally installed embedding model.
+Ask from a real discussion room in the right panel. Task suggestions are only
+text: the user must review and explicitly create any private task. Verify with
+two members and a later-invited account; the latter must not receive old message
+sources. Revoking membership or recalling a source during inference rejects the
+result. Run `python .\tools\group_privacy_probe.py --check-agent` against the
+running dev stack to verify outsider denial, pre-join exclusion, post-join
+retrieval, removal and rejoin boundaries with real local models. It creates
+three disposable accounts and dissolves the test group. Browser review of
+answer quality is still required.
 
 ### Private group translation preview
 
@@ -481,7 +610,7 @@ port. These services still bind to 127.0.0.1 for local development.
 
 Without that environment variable Vite continues proxying straight to 8081
 and 8082. The default gateway profile has static single-node targets; the
-optional local cluster profile below uses two fixed discovery instances. Both
+optional local cluster profile below supplies two fixed chat nodes. Both
 profiles bind to loopback; do not expose this setup to the public internet.
 
 ### Two-node chat cluster (opt-in local profile)
@@ -520,9 +649,9 @@ third window with its `cluster` profile:
 java -jar .\im-gateway\target\im-gateway-0.0.1-SNAPSHOT.jar --spring.profiles.active=cluster
 ```
 
-This profile registers the two loopback chat instances with Spring Cloud's
-simple discovery client. The gateway load-balances both HTTP and WebSocket
-handshakes and health-checks `/actuator/health` every five seconds. The
+This profile supplies the two loopback chat instances directly to the gateway's
+chat load balancer. It routes both HTTP and WebSocket handshakes across healthy
+nodes, checking `/actuator/health` and refreshing the result after three seconds. The
 WebSocket stays attached to its chosen node for the life of that connection;
 HTTP requests may use either node because they share MySQL. No write request
 is automatically retried by the gateway. You can override the instance URIs
@@ -541,7 +670,7 @@ The probe opens authenticated sockets on both nodes and the gateway, sends
 in both directions, then verifies that MySQL sync recovers a message sent
 while a socket was disconnected. It creates two disposable accounts and three
 messages. For a gateway failover check, stop **one** chat process with Ctrl+C,
-leave the other running, wait at least ten seconds for the health-check cycle,
+leave the other running, wait at least five seconds for the health result to expire,
 and run:
 
 ```powershell

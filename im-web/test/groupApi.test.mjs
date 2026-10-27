@@ -6,6 +6,7 @@ import {
   markGroupRead, sendGroupMessage, syncGroupMessages,
   translateGroupMessage,
   listGroupSummaries, generateGroupSummary, listGroupSummarySources,
+  askGroupAgent,
 } from "../src/groupApi.ts";
 import { sessionKey } from "../src/authApi.ts";
 
@@ -93,4 +94,20 @@ test("group recall and its change feed are group-scoped", async () => {
   assert.equal(calls[0].options.method, "DELETE");
   assert.equal(calls[1].url, "/api/chats/groups/4/messages/recalls?afterId=3&limit=50");
   assert.ok(calls.every((call) => call.options.headers.Authorization === "Bearer group-token"));
+});
+
+test("Agent questions use the current group's authenticated endpoint", async () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "group-token" : null };
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, "/api/chats/groups/4/agent/ask");
+    assert.equal(options.headers.Authorization, "Bearer group-token");
+    assert.equal(options.method, "POST");
+    assert.deepEqual(JSON.parse(options.body), { question: "下次会议准备什么" });
+    return Response.json({ answer: "准备方案", sources: [{ id: 8, body: "准备方案" }] });
+  };
+  assert.deepEqual(await askGroupAgent(4, "下次会议准备什么"),
+    { answer: "准备方案", sources: [{ id: 8, body: "准备方案" }] });
+  globalThis.sessionStorage = { getItem: () => null };
+  globalThis.fetch = () => { throw new Error("unexpected request"); };
+  await assert.rejects(askGroupAgent(4, "下次会议准备什么"), /请先登录/);
 });
