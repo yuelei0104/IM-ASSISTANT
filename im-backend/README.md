@@ -553,3 +553,74 @@ through the surviving node. Restart the stopped node after the check. Existing
 connections on a stopped process necessarily close; the browser reconnects
 and fetches missed data. This profile is a local two-node demonstration, not
 a production service registry or an exactly-once push guarantee.
+
+### Optional Kafka notification outbox
+
+The default chat mode above still uses MySQL plus Redis Pub/Sub and does not
+need Kafka. The opt-in Kafka mode adds Flyway V14's `im_notification_outbox`.
+The same transaction writes a direct/group message, recall, read cursor or
+notice and its **ID-only** notification row. A single MySQL advisory lock
+serializes the outbox relay across chat nodes: it publishes pending rows in ID
+order to Kafka, waits for broker acknowledgement, then marks each row sent.
+On a crash or ambiguous timeout the row may be sent again. The Kafka consumer
+group republishes to Redis, then manually commits its offset. If Redis fails,
+the listener retries rather than acknowledging. Every WebSocket node receives
+Redis's ID-only fanout; clients still fetch authenticated MySQL history and
+recover gaps by cursor. These are **at-least-once notifications**, not
+exactly-once delivery to a browser. Only rows marked published more than seven
+days ago are cleaned up. Kafka holds no message bodies or bearer tokens.
+
+The Compose Kafka broker is a single local KRaft node with replication factor
+one. It is for outage/retry testing, not broker high availability. Start it
+only when testing Kafka, from `D:\im-assistant\im-backend`:
+
+```powershell
+docker compose --profile kafka up -d kafka
+docker compose --profile kafka exec kafka /opt/kafka/bin/kafka-topics.sh `
+  --bootstrap-server localhost:19092 --create --if-not-exists `
+  --topic im.chat.notifications.v1 --partitions 6 --replication-factor 1
+docker compose --profile kafka exec kafka /opt/kafka/bin/kafka-topics.sh `
+  --bootstrap-server localhost:19092 --describe --topic im.chat.notifications.v1
+.\mvnw.cmd -pl im-chat-service -am test
+.\mvnw.cmd -pl im-chat-service -am package
+```
+
+Stop both old chat instances and restart them from the newly built jar, each
+in its own PowerShell window. Set the MySQL password and `IM_KAFKA_ENABLED` in
+**each** window; port 8082 in the first and 8083 in the second:
+
+```powershell
+$env:IM_MYSQL_PASSWORD = Read-Host 'IM_MYSQL_PASSWORD from .env'
+$env:IM_KAFKA_ENABLED = 'true'
+java -jar .\im-chat-service\target\im-chat-service-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev --server.port=8082
+```
+
+```powershell
+$env:IM_MYSQL_PASSWORD = Read-Host 'IM_MYSQL_PASSWORD from .env'
+$env:IM_KAFKA_ENABLED = 'true'
+java -jar .\im-chat-service\target\im-chat-service-0.0.1-SNAPSHOT.jar --spring.profiles.active=dev --server.port=8083
+```
+
+Keep user-service on 8081 and the `cluster` gateway on 8080. Then check both
+normal cross-node delivery and a temporary Kafka outage from this directory:
+
+```powershell
+python .\tools\cluster_probe.py
+python .\tools\kafka_outbox_probe.py
+```
+
+The second script stops only this Compose project's Kafka container after a
+baseline send, verifies that another send still commits and has a pending
+outbox row, restarts Kafka in a `finally` block, and waits for the recipient's
+WebSocket notice. It requires Docker Compose and the user service's `dev`
+profile; it creates two disposable accounts and two messages. Avoid running
+other Kafka outage checks at the same time. If an external process kills the
+script during the broker pause, restore with
+`docker compose --profile kafka start kafka`.
+
+Kafka is not used as a store for the actual message or a durable device
+delivery receipt. If the recipient has no live WebSocket, Redis Pub/Sub can
+still drop the hint; on reconnect the browser reads its MySQL cursor. The
+outbox does not backfill notifications from messages sent before Kafka mode
+was enabled. Start all chat instances in the same mode to avoid duplicate
+notifications through the old direct Redis path.

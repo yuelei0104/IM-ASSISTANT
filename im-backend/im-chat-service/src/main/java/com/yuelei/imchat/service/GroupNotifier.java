@@ -1,6 +1,7 @@
 package com.yuelei.imchat.service;
 
 import com.yuelei.imchat.config.ChatRealtimeConfig;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -9,6 +10,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 @Component
+@ConditionalOnProperty(name = "im.kafka.enabled", havingValue = "false", matchIfMissing = true)
 public class GroupNotifier {
     private static final Logger log = LoggerFactory.getLogger(GroupNotifier.class);
     private final StringRedisTemplate redis;
@@ -19,10 +21,7 @@ public class GroupNotifier {
     public void delivered(GroupEvent event) {
         try {
             // Only IDs cross Pub/Sub; clients read messages using their own bearer token.
-            redis.convertAndSend(ChatRealtimeConfig.TOPIC,
-                    "G:" + event.groupId() + ":" + event.messageId() + ":" +
-                            event.recipients().stream().map(String::valueOf)
-                                    .collect(java.util.stream.Collectors.joining(",")));
+            redis.convertAndSend(ChatRealtimeConfig.TOPIC, RealtimeEvent.group(event).payload());
         } catch (RuntimeException ex) {
             log.warn("Group notification failed for group {}", event.groupId(), ex);
         }
