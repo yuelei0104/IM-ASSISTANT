@@ -1,6 +1,8 @@
 package com.yuelei.imchat.service;
 
 import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -19,8 +21,10 @@ import java.util.concurrent.TimeUnit;
 
 @Component
 public class ChatSocketHandler extends TextWebSocketHandler {
+    private static final Logger log = LoggerFactory.getLogger(ChatSocketHandler.class);
     private static final Duration AUTH_TTL = Duration.ofMinutes(6);
     private final UserAccessClient access;
+    private final ChatNodeDirectory directory;
     private final ConcurrentHashMap<String, WebSocketSession> sockets = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Long> identities = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Instant> verified = new ConcurrentHashMap<>();
@@ -32,9 +36,11 @@ public class ChatSocketHandler extends TextWebSocketHandler {
         return thread;
     });
 
-    public ChatSocketHandler(UserAccessClient access) {
+    public ChatSocketHandler(UserAccessClient access, ChatNodeDirectory directory) {
         this.access = access;
+        this.directory = directory;
         sweep.scheduleAtFixedRate(this::closeExpired, 10, 10, TimeUnit.SECONDS);
+        sweep.scheduleAtFixedRate(this::renewRoutes, 20, 20, TimeUnit.SECONDS);
     }
 
     @Override
@@ -57,13 +63,26 @@ public class ChatSocketHandler extends TextWebSocketHandler {
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
+        if (sockets.get(session.getId()) != session || !session.isOpen()) return;
         Long previous = identities.putIfAbsent(session.getId(), userId);
         if (previous != null && previous != userId) {
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
-        byUser.computeIfAbsent(userId, ignored -> ConcurrentHashMap.newKeySet()).add(session.getId());
+        byUser.compute(userId, (id, sessions) -> {
+            if (sessions == null) sessions = ConcurrentHashMap.newKeySet();
+            sessions.add(session.getId());
+            try { directory.renew(id); }
+            catch (RuntimeException ex) { log.warn("Chat route renewal failed for node {}", directory.nodeId()); }
+            return sessions;
+        });
         verified.put(session.getId(), Instant.now());
+        // Authentication may finish after a concurrent transport close. Do not
+        // leave behind a lease or acknowledge a connection that has disappeared.
+        if (sockets.get(session.getId()) != session || !session.isOpen()) {
+            remove(session);
+            return;
+        }
         send(session, "READY");
     }
 
@@ -130,6 +149,17 @@ public class ChatSocketHandler extends TextWebSocketHandler {
         }
     }
 
+    private void renewRoutes() {
+        for (Long userId : byUser.keySet()) {
+            byUser.computeIfPresent(userId, (id, sessions) -> {
+                if (sessions.isEmpty()) return null;
+                try { directory.renew(id); }
+                catch (RuntimeException ex) { log.warn("Chat route renewal failed for node {}", directory.nodeId()); }
+                return sessions;
+            });
+        }
+    }
+
     private void close(WebSocketSession session) {
         remove(session);
         try { if (session.isOpen()) session.close(CloseStatus.POLICY_VIOLATION); }
@@ -143,11 +173,13 @@ public class ChatSocketHandler extends TextWebSocketHandler {
         verified.remove(id);
         Long userId = identities.remove(id);
         if (userId != null) {
-            Set<String> userSockets = byUser.get(userId);
-            if (userSockets != null) {
-                userSockets.remove(id);
-                if (userSockets.isEmpty()) byUser.remove(userId, userSockets);
-            }
+            byUser.computeIfPresent(userId, (key, sessions) -> {
+                sessions.remove(id);
+                if (!sessions.isEmpty()) return sessions;
+                try { directory.remove(key); }
+                catch (RuntimeException ex) { log.warn("Chat route removal failed for node {}", directory.nodeId()); }
+                return null;
+            });
         }
     }
 

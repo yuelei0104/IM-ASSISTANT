@@ -14,7 +14,8 @@ import static org.mockito.Mockito.*;
 
 class ChatSocketHandlerTest {
     private final UserAccessClient access = mock(UserAccessClient.class);
-    private final ChatSocketHandler handler = new ChatSocketHandler(access);
+    private final ChatNodeDirectory directory = mock(ChatNodeDirectory.class);
+    private final ChatSocketHandler handler = new ChatSocketHandler(access, directory);
 
     @AfterEach
     void close() { handler.shutdown(); }
@@ -32,6 +33,7 @@ class ChatSocketHandlerTest {
         handler.afterConnectionEstablished(stranger);
 
         handler.handleMessage(recipient, new TextMessage("AUTH valid-token"));
+        verify(directory).renew(42L);
         handler.notifyMessage(91L, 7L, 42L);
 
         var messages = org.mockito.ArgumentCaptor.forClass(TextMessage.class);
@@ -49,6 +51,7 @@ class ChatSocketHandlerTest {
         handler.handleMessage(session, new TextMessage("HELLO"));
         verify(session).close(CloseStatus.POLICY_VIOLATION);
         verifyNoInteractions(access);
+        verifyNoInteractions(directory);
     }
 
     @Test
@@ -79,5 +82,50 @@ class ChatSocketHandlerTest {
         assertEquals(List.of("READY", "READ 23 42"), readerMessages.getAllValues().stream().map(TextMessage::getPayload).toList());
         assertEquals(List.of("READY", "READ 23 42"), senderMessages.getAllValues().stream().map(TextMessage::getPayload).toList());
         verify(outsider, never()).sendMessage(any());
+    }
+
+    @Test
+    void routeLivesUntilLastDeviceDisconnects() throws Exception {
+        WebSocketSession first = mock(WebSocketSession.class);
+        WebSocketSession second = mock(WebSocketSession.class);
+        when(first.getId()).thenReturn("one");
+        when(second.getId()).thenReturn("two");
+        when(first.isOpen()).thenReturn(true);
+        when(second.isOpen()).thenReturn(true);
+        when(access.requireUser("Bearer user")).thenReturn(42L);
+        handler.afterConnectionEstablished(first);
+        handler.afterConnectionEstablished(second);
+        handler.handleMessage(first, new TextMessage("AUTH user"));
+        handler.handleMessage(second, new TextMessage("AUTH user"));
+        verify(directory, times(2)).renew(42L);
+
+        handler.afterConnectionClosed(first, CloseStatus.NORMAL);
+        verify(directory, never()).remove(42L);
+        handler.afterConnectionClosed(second, CloseStatus.NORMAL);
+        verify(directory).remove(42L);
+    }
+
+    @Test
+    void disconnectedDuringAuthenticationNeverRegistersRoute() throws Exception {
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.getId()).thenReturn("gone");
+        when(session.isOpen()).thenReturn(false);
+        when(access.requireUser("Bearer user")).thenReturn(42L);
+        handler.afterConnectionEstablished(session);
+        handler.handleMessage(session, new TextMessage("AUTH user"));
+        verifyNoInteractions(directory);
+        verify(session, never()).sendMessage(any());
+    }
+
+    @Test
+    void redisPresenceFailureDoesNotBlockAuthenticatedSocket() throws Exception {
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.getId()).thenReturn("connected");
+        when(session.isOpen()).thenReturn(true);
+        when(access.requireUser("Bearer user")).thenReturn(42L);
+        doThrow(new IllegalStateException("redis unavailable")).when(directory).renew(42L);
+        handler.afterConnectionEstablished(session);
+        handler.handleMessage(session, new TextMessage("AUTH user"));
+        verify(session).sendMessage(argThat(message -> "READY".equals(message.getPayload())));
     }
 }

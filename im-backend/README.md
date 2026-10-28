@@ -647,10 +647,27 @@ The default gateway profile above remains a single-node route. To exercise two
 chat nodes, start a single user-service on 8081 and two copies of the same
 chat-service jar on 8082 and 8083. They must share the **same MySQL database
 and Redis**. Each node keeps only its own authenticated WebSocket sessions;
+after authentication it also maintains a Redis sorted-set lease at
+`im:chat:routes:<userId>` with an instance ID (`port-UUID`) and an expiry
+timestamp. A user with sockets on two nodes has two independent entries.
+The node renews active leases every 20 seconds, removes its entry only after
+its last local socket closes, and dead-node entries age out after 60 seconds;
+the Redis key itself expires when no node renews it. These leases contain no
+session token or message content. If Redis is temporarily unavailable, socket
+authentication still succeeds and the authenticated client can sync messages;
+the lease is retried while its socket remains open. Run
+`python .\tools\chat_route_probe.py` to verify two-node presence and cleanup
+with a disposable development account.
+
+The route table is advisory: it is not used to authorize message reads or
+select the gateway's initial WebSocket node. The current notification fan-out
+continues to broadcast ID-only events to nodes; the route table can support a
+later targeted notification optimization once re-connect races are handled.
+This preserves the existing best-effort push plus durable cursor sync behavior:
 after a database commit, Redis Pub/Sub carries ID-only notifications to both
 nodes. A client always fetches the real message through authenticated HTTP.
 Pub/Sub is best-effort, so reconnection synchronizes missing messages from
-MySQL by cursor. There is no separate Redis user-to-node routing table.
+MySQL by cursor.
 
 Build once from `D:\im-assistant\im-backend`:
 
