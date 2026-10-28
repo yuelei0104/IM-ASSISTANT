@@ -1,18 +1,17 @@
 package com.yuelei.imchat;
 
-import com.yuelei.imchat.config.ChatRealtimeConfig;
 import com.yuelei.imchat.dao.OutboxDao;
 import com.yuelei.imchat.model.DirectMessage;
 import com.yuelei.imchat.model.OutboxRow;
 import com.yuelei.imchat.service.KafkaOutboxRelay;
 import com.yuelei.imchat.service.KafkaOutboxMetrics;
 import com.yuelei.imchat.service.KafkaRealtimeBridge;
+import com.yuelei.imchat.service.ChatRealtimePublisher;
 import com.yuelei.imchat.service.NotificationOutboxWriter;
 import org.apache.ibatis.session.SqlSession;
 import org.apache.ibatis.session.SqlSessionFactory;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.Acknowledgment;
 
@@ -82,14 +81,13 @@ class KafkaNotificationPipelineTest {
 
     @Test
     void redisFailureLeavesKafkaOffsetUnacknowledged() {
-        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ChatRealtimePublisher publisher = mock(ChatRealtimePublisher.class);
         Acknowledgment acknowledgment = mock(Acknowledgment.class);
-        var bridge = new KafkaRealtimeBridge(redis);
-        when(redis.convertAndSend(ChatRealtimeConfig.TOPIC, "91:23:9"))
-                .thenThrow(new IllegalStateException("redis unavailable"));
+        var bridge = new KafkaRealtimeBridge(publisher);
+        doThrow(new IllegalStateException("redis unavailable"))
+                .doNothing().when(publisher).publish("91:23:9");
         assertThrows(IllegalStateException.class, () -> bridge.notifyNodes("91:23:9", acknowledgment));
         verifyNoInteractions(acknowledgment);
-        doReturn(1L).when(redis).convertAndSend(ChatRealtimeConfig.TOPIC, "91:23:9");
         bridge.notifyNodes("91:23:9", acknowledgment);
         verify(acknowledgment).acknowledge();
     }

@@ -1,6 +1,7 @@
 package com.yuelei.imchat.config;
 
 import com.yuelei.imchat.service.ChatSocketHandler;
+import com.yuelei.imchat.service.ChatNodeDirectory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -12,12 +13,14 @@ import java.nio.charset.StandardCharsets;
 @Configuration
 public class ChatRealtimeConfig {
     public static final String TOPIC = "im:chat:messages";
+    public static String nodeTopic(String nodeId) { return "im:chat:node:" + nodeId; }
 
     @Bean
-    public RedisMessageListenerContainer chatMessages(RedisConnectionFactory factory, ChatSocketHandler sockets) {
+    public RedisMessageListenerContainer chatMessages(RedisConnectionFactory factory, ChatSocketHandler sockets,
+                                                      ChatNodeDirectory directory) {
         var container = new RedisMessageListenerContainer();
         container.setConnectionFactory(factory);
-        container.addMessageListener((message, pattern) -> {
+        org.springframework.data.redis.connection.MessageListener listener = (message, pattern) -> {
             String[] parts = new String(message.getBody(), StandardCharsets.UTF_8).split(":", -1);
             try {
                 if (parts.length == 2 && "N".equals(parts[0])) {
@@ -35,7 +38,9 @@ public class ChatRealtimeConfig {
                             Long.parseLong(parts[2]));
                 }
             } catch (NumberFormatException ignored) { }
-        }, new ChannelTopic(TOPIC));
+        };
+        container.addMessageListener(listener, new ChannelTopic(TOPIC));
+        container.addMessageListener(listener, new ChannelTopic(nodeTopic(directory.nodeId())));
         return container;
     }
 }

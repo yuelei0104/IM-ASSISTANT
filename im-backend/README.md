@@ -660,14 +660,18 @@ the lease is retried while its socket remains open. Run
 with a disposable development account.
 
 The route table is advisory: it is not used to authorize message reads or
-select the gateway's initial WebSocket node. The current notification fan-out
-continues to broadcast ID-only events to nodes; the route table can support a
-later targeted notification optimization once re-connect races are handled.
-This preserves the existing best-effort push plus durable cursor sync behavior:
-after a database commit, Redis Pub/Sub carries ID-only notifications to both
-nodes. A client always fetches the real message through authenticated HTTP.
-Pub/Sub is best-effort, so reconnection synchronizes missing messages from
-MySQL by cursor.
+select the gateway's initial WebSocket node. Each node subscribes to its own
+instance-scoped Redis Pub/Sub channel as well as the shared fallback channel.
+After a commit, the publisher looks up every recipient's active leases and
+sends the ID-only event once to each distinct destination node. If any recipient
+has no lease, it broadcasts once on the fallback channel; all nodes still
+filter by authenticated local sockets. A stale lease can point to a dead node,
+and Redis Pub/Sub is not durable. Reconnecting clients synchronize missing
+messages from MySQL by cursor; Kafka mode retries relay failures but does not
+turn a WebSocket push into a durable delivery acknowledgement. A client always
+fetches the actual message through authenticated HTTP. Run
+`python .\tools\cluster_probe.py` after rebuilding to check cross-node push and
+reconnection, including when Kafka mode is enabled.
 
 Build once from `D:\im-assistant\im-backend`:
 
