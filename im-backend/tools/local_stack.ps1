@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('start', 'status', 'smoke', 'stop')]
+    [ValidateSet('start', 'status', 'smoke', 'stop', 'pause-chat-b', 'resume-chat-b')]
     [string]$Action = 'status',
     [switch]$Build,
     [switch]$StopInfrastructure,
@@ -312,6 +312,43 @@ switch ($Action) {
             Write-Host "$($entry.Service): PID $($entry.Id), owned=$($null -ne $process), health=$health"
         }
         Write-Host "Web URL: http://127.0.0.1:$($state.WebPort)/"
+    }
+    'pause-chat-b' {
+        $state = Read-State
+        if ($null -eq $state) { throw 'No recorded local stack; use start first' }
+        $entry = @($state.Processes | Where-Object { $_.Service -eq 'chat-b' }) | Select-Object -Last 1
+        if ($null -eq $entry -or $null -eq (Owned-Process $entry)) {
+            throw 'Recorded chat-b process is not running or its identity changed; refusing to stop another process'
+        }
+        Stop-Process -Id $entry.Id -ErrorAction Stop
+        $deadline = (Get-Date).AddSeconds(15)
+        do {
+            if ($null -eq (Get-Process -Id $entry.Id -ErrorAction SilentlyContinue)) {
+                Write-Host "Paused recorded chat-b (PID $($entry.Id)); use resume-chat-b to restore it"
+                break
+            }
+            if ((Get-Date) -ge $deadline) { throw 'chat-b did not stop; use status to inspect it' }
+            Start-Sleep -Milliseconds 300
+        } while ($true)
+    }
+    'resume-chat-b' {
+        $state = Read-State
+        if ($null -eq $state) { throw 'No recorded local stack; use start first' }
+        $old = @($state.Processes | Where-Object { $_.Service -eq 'chat-b' }) | Select-Object -Last 1
+        if ($null -eq $old) { throw 'No recorded chat-b; use start first' }
+        if ($null -ne (Owned-Process $old)) { throw 'Recorded chat-b is still running' }
+        $occupied = @(Get-NetTCPConnection -LocalPort 8083 -State Listen -ErrorAction SilentlyContinue)
+        if ($occupied.Count -gt 0) { throw "Port 8083 is occupied by PID $($occupied[0].OwningProcess); refusing to replace it" }
+        $jar = Join-Path $backend 'im-chat-service\target\im-chat-service-0.0.1-SNAPSHOT.jar'
+        if (-not (Test-Path $jar)) { throw "Missing $jar; rebuild the chat service" }
+        $env:IM_MYSQL_PASSWORD = Read-AppPassword
+        $env:IM_KAFKA_ENABLED = 'true'
+        $env:IM_KAFKA_BOOTSTRAP = '127.0.0.1:19092'
+        $java = (Get-Command java.exe -ErrorAction Stop).Source
+        $state.Processes = @($state.Processes | Where-Object { $_.Service -ne 'chat-b' })
+        Save-State $state
+        $entry = Launch 'chat-b' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8083') $backend $jar $state
+        Wait-Health 'chat-b' 8083 $entry
     }
     'smoke' {
         $state = Read-State

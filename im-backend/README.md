@@ -732,6 +732,24 @@ connections on a stopped process necessarily close; the browser reconnects
 and fetches missed data. This profile is a local two-node demonstration, not
 a production service registry or an exactly-once push guarantee.
 
+For a full, repeatable node-failure acceptance using the **recorded local stack**
+started with `tools\local_stack.ps1 start -Build`, run from the backend directory:
+
+```powershell
+python .\tools\node_failover_probe.py
+```
+
+The probe verifies a push between nodes, stops only the `chat-b` process whose
+PID, start time and command line match `.local-stack\state.json`, waits for
+the gateway to use `chat-a`, sends while the recipient is offline, and verifies
+that a fresh gateway WebSocket plus MySQL cursor sync recover the message.
+It also checks a new live push on the surviving node and restores `chat-b` in a
+`finally` block. Two disposable accounts and three messages remain in the dev
+database. If the probe reports a restore failure, use
+`.\tools\local_stack.ps1 status` and then `.\tools\local_stack.ps1 resume-chat-b`
+after inspecting the occupied port. The two new launcher actions
+`pause-chat-b` and `resume-chat-b` do not stop Docker, user-service or the web.
+
 ### Optional Kafka notification outbox
 
 The default chat mode above still uses MySQL plus Redis Pub/Sub and does not
