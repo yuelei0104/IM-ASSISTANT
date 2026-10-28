@@ -43,6 +43,27 @@
     <insert id="trackInbox">
         INSERT IGNORE INTO im_direct_inbox (user_id, peer_id) VALUES (#{userId}, #{peerId})
     </insert>
+    <select id="lastPairMessageId" resultType="long">
+        SELECT MAX(id) FROM im_direct_message FORCE INDEX (idx_direct_pair_history)
+        WHERE user_low_id = #{low} AND user_high_id = #{high}
+    </select>
+    <select id="clearCursor" resultType="long">
+        SELECT last_cleared_id FROM im_direct_clear WHERE user_id = #{userId} AND peer_id = #{peerId}
+    </select>
+    <insert id="clearConversation">
+        INSERT INTO im_direct_clear (user_id, peer_id, last_cleared_id)
+        VALUES (#{userId}, #{peerId}, #{messageId})
+        ON DUPLICATE KEY UPDATE last_cleared_id = GREATEST(last_cleared_id, #{messageId})
+    </insert>
+    <select id="hiddenConversations" resultType="long">
+        SELECT c.peer_id FROM im_direct_clear c
+        WHERE c.user_id = #{userId} AND NOT EXISTS (
+            SELECT 1 FROM im_direct_message m FORCE INDEX (idx_direct_pair_history)
+            WHERE m.user_low_id = LEAST(c.user_id, c.peer_id)
+              AND m.user_high_id = GREATEST(c.user_id, c.peer_id)
+              AND m.id &gt; c.last_cleared_id
+        )
+    </select>
     <select id="byClientId" resultMap="message">
         SELECT id, sender_id, recipient_id, client_msg_id, body, created_at, recalled_at
         FROM im_direct_message WHERE sender_id = #{senderId} AND client_msg_id = #{clientMsgId}
@@ -63,12 +84,16 @@
     <select id="recalls" resultMap="recall">
         SELECT id, message_id, recalled_at FROM im_direct_recall
         WHERE user_low_id = #{low} AND user_high_id = #{high} AND id &gt; #{afterId}
+          AND message_id &gt; COALESCE((SELECT last_cleared_id FROM im_direct_clear
+                  WHERE user_id = #{userId} AND peer_id = #{peerId}), 0)
         ORDER BY id ASC LIMIT #{limit}
     </select>
     <select id="history" resultMap="message">
         SELECT id, sender_id, recipient_id, client_msg_id, body, created_at, recalled_at
         FROM im_direct_message
         WHERE user_low_id = #{low} AND user_high_id = #{high}
+          AND id &gt; COALESCE((SELECT last_cleared_id FROM im_direct_clear
+                  WHERE user_id = #{userId} AND peer_id = #{peerId}), 0)
         <if test="beforeId != null">AND id &lt; #{beforeId}</if>
         ORDER BY id DESC
         LIMIT #{limit}
@@ -77,6 +102,8 @@
         SELECT id, sender_id, recipient_id, client_msg_id, body, created_at, recalled_at
         FROM im_direct_message FORCE INDEX (idx_direct_pair_history)
         WHERE user_low_id = #{low} AND user_high_id = #{high} AND id &gt; #{afterId}
+          AND id &gt; COALESCE((SELECT last_cleared_id FROM im_direct_clear
+                  WHERE user_id = #{userId} AND peer_id = #{peerId}), 0)
         ORDER BY id ASC
         LIMIT #{limit}
     </select>
@@ -85,6 +112,8 @@
         FROM im_direct_message FORCE INDEX (idx_direct_pair_history)
         WHERE user_low_id = #{low} AND user_high_id = #{high}
           AND recalled_at IS NULL AND body LIKE CONCAT('%', #{pattern}, '%') ESCAPE '='
+          AND id &gt; COALESCE((SELECT last_cleared_id FROM im_direct_clear
+                  WHERE user_id = #{userId} AND peer_id = #{peerId}), 0)
         <if test="beforeId != null">AND id &lt; #{beforeId}</if>
         ORDER BY id DESC LIMIT #{limit}
     </select>
@@ -92,15 +121,19 @@
         SELECT i.peer_id,
                (SELECT COUNT(*) FROM im_direct_message m FORCE INDEX (idx_direct_unread)
                 WHERE m.recipient_id = i.user_id AND m.sender_id = i.peer_id
-                  AND m.recalled_at IS NULL AND m.id &gt; COALESCE(r.last_read_message_id, 0)) AS unread_count
+                  AND m.recalled_at IS NULL AND m.id &gt; GREATEST(
+                      COALESCE(r.last_read_message_id, 0), COALESCE(c.last_cleared_id, 0))) AS unread_count
         FROM im_direct_inbox i
         LEFT JOIN im_direct_read r ON r.user_id = i.user_id AND r.peer_id = i.peer_id
+        LEFT JOIN im_direct_clear c ON c.user_id = i.user_id AND c.peer_id = i.peer_id
         WHERE i.user_id = #{userId}
         HAVING unread_count &gt; 0
     </select>
     <select id="receivedCount" resultType="long">
         SELECT COUNT(*) FROM im_direct_message
         WHERE id = #{messageId} AND recipient_id = #{userId} AND sender_id = #{peerId}
+          AND id &gt; COALESCE((SELECT last_cleared_id FROM im_direct_clear
+                  WHERE user_id = #{userId} AND peer_id = #{peerId}), 0)
     </select>
     <select id="readCursor" resultType="long">
         SELECT last_read_message_id FROM im_direct_read

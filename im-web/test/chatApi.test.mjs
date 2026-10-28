@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, getDirectReadReceipt, sendDirectMessage, recallDirectMessage, listDirectRecalls } from "../src/chatApi.ts";
+import { connectChatSocket, listUnreadDirect, listHiddenDirectConversations, clearDirectConversation, loadDirectMessages, syncDirectMessages, markDirectRead, getDirectReadReceipt, sendDirectMessage, recallDirectMessage, listDirectRecalls } from "../src/chatApi.ts";
 import { sessionKey } from "../src/authApi.ts";
 
 test("direct messages use the user's token, cursor and stable client id", async () => {
@@ -74,6 +74,21 @@ test("unread summary and read receipt use authenticated endpoints", async () => 
   await markDirectRead(2, 41);
   assert.equal(calls[1].url, "/api/chats/direct/2/read");
   assert.deepEqual(JSON.parse(calls[1].options.body), { lastReadMessageId: 41 });
+});
+
+test("conversation clearing uses an authenticated per-peer request", async () => {
+  globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "alice-token" : null };
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push([url, options.method, options.headers.Authorization]);
+    return options.method === "DELETE" ? new Response(null, { status: 204 }) : Response.json([2]);
+  };
+  assert.deepEqual(await listHiddenDirectConversations(), [2]);
+  await clearDirectConversation(2);
+  assert.deepEqual(calls, [
+    ["/api/chats/direct/conversations/hidden", "GET", "Bearer alice-token"],
+    ["/api/chats/direct/conversations/2", "DELETE", "Bearer alice-token"],
+  ]);
 });
 
 test("sender fetches the peer's read cursor using its bearer session", async () => {

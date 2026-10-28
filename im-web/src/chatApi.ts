@@ -75,6 +75,10 @@ export function listUnreadDirect() {
   return request<UnreadCount[]>("/unread");
 }
 
+export const listHiddenDirectConversations = () => request<number[]>("/conversations/hidden");
+export const clearDirectConversation = (peerId: number) =>
+  request<void>(`/conversations/${peerId}`, undefined, "DELETE");
+
 export function markDirectRead(peerId: number, lastReadMessageId: number) {
   return request<void>(`/${peerId}/read`, { lastReadMessageId });
 }

@@ -171,6 +171,23 @@ Stop the service with Ctrl+C in its terminal.
 
 ## One-to-one messages (local development)
 
+### Clear a direct conversation for one account
+
+The chat header's **删除我的会话** action calls
+`DELETE /api/chats/direct/conversations/{peerId}`. Flyway V15 stores an
+independent last-cleared message ID for that account and peer. History, sync,
+search, recall feeds and unread counts only include messages newer than that
+boundary for the caller; the other participant's messages and friendship are
+unchanged. `GET /api/chats/direct/conversations/hidden` keeps the sidebar
+hidden across reloads and devices. A newly committed message after the boundary
+reopens the conversation. Pair-row locking orders a clear against concurrent
+sends. The database retains shared messages because the other participant may
+still need them; this is a per-account view deletion, not a global purge.
+
+Run `python .\tools\direct_conversation_probe.py` from this directory with
+the dev user/chat services running to check per-account visibility, unread,
+friendship and reopening with two disposable test accounts.
+
 Search within an authenticated conversation using
 `GET /api/chats/direct/{friendId}/messages/search?q=keyword&limit=20&beforeId=123`
 or `GET /api/chats/groups/{groupId}/messages/search` with the same parameters.

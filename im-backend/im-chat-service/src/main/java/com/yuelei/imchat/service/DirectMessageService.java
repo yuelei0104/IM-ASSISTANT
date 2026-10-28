@@ -45,6 +45,9 @@ public class DirectMessageService {
         if (saved == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "消息保存失败");
         if (saved.recipientId() != friendId || saved.recalledAt() != null || !saved.body().equals(body))
             throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于另一条消息");
+        Long cleared = messages.clearCursor(senderId, friendId);
+        if (cleared != null && saved.id() <= cleared)
+            throw new ChatException(HttpStatus.CONFLICT, "消息编号已用于已清空的会话");
         messages.trackInbox(friendId, senderId);
         events.publishEvent(saved);
         return saved;
@@ -74,7 +77,7 @@ public class DirectMessageService {
         if (friendId <= 0 || friendId == userId || afterId < 0 || limit < 1 || limit > 50)
             throw new ChatException(HttpStatus.BAD_REQUEST, "撤回游标无效");
         List<MessageRecall> rows = messages.recalls(Math.min(userId, friendId),
-                Math.max(userId, friendId), afterId, limit + 1);
+                Math.max(userId, friendId), userId, friendId, afterId, limit + 1);
         List<MessageRecall> page = rows.subList(0, Math.min(rows.size(), limit));
         return new com.yuelei.imchat.dto.MessageDtos.RecallPage(page,
                 rows.size() > limit ? page.get(page.size() - 1).id() : null);
@@ -85,7 +88,7 @@ public class DirectMessageService {
         if (friendId <= 0 || friendId == userId || beforeId != null && beforeId <= 0 || limit < 1 || limit > 50)
             throw new ChatException(HttpStatus.BAD_REQUEST, "分页参数无效");
         List<DirectMessage> descending = messages.history(Math.min(userId, friendId),
-                Math.max(userId, friendId), beforeId, limit + 1);
+                Math.max(userId, friendId), userId, friendId, beforeId, limit + 1);
         boolean hasOlder = descending.size() > limit;
         List<DirectMessage> page = new ArrayList<>(descending.subList(0, Math.min(limit, descending.size())));
         Long nextBeforeId = hasOlder ? page.get(page.size() - 1).id() : null;
@@ -98,7 +101,7 @@ public class DirectMessageService {
         if (friendId <= 0 || friendId == userId || afterId < 0 || limit < 1 || limit > 50)
             throw new ChatException(HttpStatus.BAD_REQUEST, "增量游标无效");
         List<DirectMessage> rows = messages.after(Math.min(userId, friendId),
-                Math.max(userId, friendId), afterId, limit + 1);
+                Math.max(userId, friendId), userId, friendId, afterId, limit + 1);
         boolean hasMore = rows.size() > limit;
         List<DirectMessage> page = rows.subList(0, Math.min(limit, rows.size()));
         return new SyncPage(page, hasMore ? page.get(page.size() - 1).id() : null);
@@ -110,13 +113,31 @@ public class DirectMessageService {
             throw new ChatException(HttpStatus.BAD_REQUEST, "分页参数无效");
         String pattern = SearchTerm.pattern(query);
         List<DirectMessage> rows = messages.search(Math.min(userId, friendId), Math.max(userId, friendId),
-                pattern, beforeId, limit + 1);
+                userId, friendId, pattern, beforeId, limit + 1);
         List<DirectMessage> page = List.copyOf(rows.subList(0, Math.min(rows.size(), limit)));
         return new Page(page, rows.size() > limit ? page.get(page.size() - 1).id() : null);
     }
 
     public List<UnreadCount> unread(String authorization) {
         return messages.unreadCounts(access.requireUser(authorization));
+    }
+
+    public List<Long> hiddenConversations(String authorization) {
+        return messages.hiddenConversations(access.requireUser(authorization));
+    }
+
+    @Transactional
+    public void clearConversation(String authorization, long peerId) {
+        long userId = access.requireUser(authorization);
+        if (peerId <= 0 || peerId == userId)
+            throw new ChatException(HttpStatus.BAD_REQUEST, "会话账号无效");
+        long low = Math.min(userId, peerId), high = Math.max(userId, peerId);
+        // Serialize against sends to this pair. A concurrent new message is
+        // either included in the clear boundary or stays visible afterwards.
+        messages.ensurePair(low, high);
+        messages.lockPair(low, high);
+        Long latest = messages.lastPairMessageId(low, high);
+        messages.clearConversation(userId, peerId, latest == null ? 0 : latest);
     }
 
     public long peerReadCursor(String authorization, long peerId) {

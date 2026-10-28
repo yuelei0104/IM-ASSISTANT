@@ -16,19 +16,28 @@ public interface MessageDao {
                @Param("senderId") long senderId, @Param("recipientId") long recipientId,
                @Param("clientMsgId") String clientMsgId, @Param("body") String body);
     int trackInbox(@Param("userId") long userId, @Param("peerId") long peerId);
+    Long lastPairMessageId(@Param("low") long low, @Param("high") long high);
+    Long clearCursor(@Param("userId") long userId, @Param("peerId") long peerId);
+    int clearConversation(@Param("userId") long userId, @Param("peerId") long peerId,
+                          @Param("messageId") long messageId);
+    List<Long> hiddenConversations(@Param("userId") long userId);
     DirectMessage byClientId(@Param("senderId") long senderId, @Param("clientMsgId") String clientMsgId);
     DirectMessage byId(@Param("messageId") long messageId);
     int recall(@Param("messageId") long messageId, @Param("senderId") long senderId);
     int addRecall(@Param("messageId") long messageId, @Param("low") long low,
                   @Param("high") long high);
     List<MessageRecall> recalls(@Param("low") long low, @Param("high") long high,
+                                @Param("userId") long userId, @Param("peerId") long peerId,
                                 @Param("afterId") long afterId, @Param("limit") int limit);
     List<DirectMessage> history(@Param("low") long low, @Param("high") long high,
+                                @Param("userId") long userId, @Param("peerId") long peerId,
                                 @Param("beforeId") Long beforeId, @Param("limit") int limit);
     List<DirectMessage> search(@Param("low") long low, @Param("high") long high,
+                               @Param("userId") long userId, @Param("peerId") long peerId,
                                @Param("pattern") String pattern, @Param("beforeId") Long beforeId,
                                @Param("limit") int limit);
     List<DirectMessage> after(@Param("low") long low, @Param("high") long high,
+                              @Param("userId") long userId, @Param("peerId") long peerId,
                               @Param("afterId") long afterId, @Param("limit") int limit);
     List<UnreadCount> unreadCounts(@Param("userId") long userId);
     long receivedCount(@Param("userId") long userId, @Param("peerId") long peerId,

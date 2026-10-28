@@ -43,7 +43,7 @@ import {
   type ContactProfile,
   type ContactRequest,
 } from "./contactApi";
-import { connectChatSocket, listUnreadDirect, loadDirectMessages, syncDirectMessages, markDirectRead, getDirectReadReceipt, sendDirectMessage, searchDirectMessages, recallDirectMessage, listDirectRecalls, type DirectMessage, type MessageRecall } from "./chatApi";
+import { connectChatSocket, listUnreadDirect, listHiddenDirectConversations, clearDirectConversation, loadDirectMessages, syncDirectMessages, markDirectRead, getDirectReadReceipt, sendDirectMessage, searchDirectMessages, recallDirectMessage, listDirectRecalls, type DirectMessage, type MessageRecall } from "./chatApi";
 import {
   createGroupChat, getGroup, getGroupMessage, inviteGroupMembers, leaveGroup, removeGroupMember,
   transferGroupOwner, dissolveGroup,
@@ -213,6 +213,8 @@ const contactProfiles = ref<ContactProfile[]>([]);
 const friendsNextCursor = ref<number | null>(null);
 const requestsNextCursor = ref<number | null>(null);
 const knownPeers = ref<ContactProfile[]>([]);
+const hiddenPeers = ref<number[]>([]);
+let hiddenSeq = 0;
 const loadingPeers = new Set<number>();
 const directMessages = ref<DirectMessage[]>([]);
 const peerLastReadId = ref(0);
@@ -396,7 +398,8 @@ const realGroups = computed<Conversation[]>(() =>
   })),
 );
 const realConversations = computed<Conversation[]>(() =>
-  knownPeers.value.map((p) => ({
+  knownPeers.value.filter((p) => !hiddenPeers.value.includes(p.id)
+    || activeId.value === `server-user-${p.id}`).map((p) => ({
     id: `server-user-${p.id}`,
     name: p.nickname,
     kind: "direct",
@@ -1146,7 +1149,10 @@ function onChatEvent(kind?: "direct" | "group" | "notice" | "receipt", membershi
       void refreshPeerReadReceipt(peerId, currentAccount.value.id, chatSeq);
     return;
   }
-  if (!kind || kind === "direct") void refreshUnread();
+  if (!kind || kind === "direct") {
+    void refreshUnread();
+    void refreshHiddenConversations();
+  }
   if (!kind || kind === "group") {
     const refreshed = refreshGroups();
     if (membershipGroupId) void refreshed.then(() => reconcileGroupMembership(membershipGroupId));
@@ -1270,6 +1276,8 @@ function applyAccount(account: Account) {
   lastMarkedRead.clear();
   readInFlight.clear();
   knownPeers.value = loadKnownPeers(account);
+  hiddenPeers.value = [];
+  hiddenSeq++;
   directMessages.value = [];
   peerLastReadId.value = 0;
   groupMessages.value = [];
@@ -1323,6 +1331,7 @@ function applyAccount(account: Account) {
   currentAccount.value = account;
   page.value = "chat";
   void refreshContacts();
+  void refreshHiddenConversations();
   void refreshUnread();
   void refreshGroups();
   void refreshNotices();
@@ -1364,6 +1373,18 @@ async function refreshContacts() {
     }
   } finally {
     if (sequence === contactsSeq) contactsBusy.value = false;
+  }
+}
+async function refreshHiddenConversations() {
+  const accountId = currentAccount.value?.id;
+  if (!accountId) return;
+  const sequence = ++hiddenSeq;
+  try {
+    const ids = await listHiddenDirectConversations();
+    if (sequence === hiddenSeq && currentAccount.value?.id === accountId)
+      hiddenPeers.value = ids;
+  } catch {
+    // The server remains authoritative; retry on the next reconnect or poll.
   }
 }
 async function loadMoreFriends() {
@@ -1542,6 +1563,8 @@ async function signOut() {
   friendsNextCursor.value = null;
   requestsNextCursor.value = null;
   knownPeers.value = [];
+  hiddenPeers.value = [];
+  hiddenSeq++;
   directMessages.value = [];
   peerLastReadId.value = 0;
   groupMessages.value = [];
@@ -1635,6 +1658,7 @@ async function send() {
       const saved = await sendDirectMessage(peerId, clientMsgId, text);
       if (currentAccount.value?.id !== accountId || directPeer(activeId.value) !== peerId) return;
       mergeDirect([saved]);
+      void refreshHiddenConversations();
       composer.value = "";
       pendingSend = null;
       chatError.value = "";
@@ -1902,6 +1926,32 @@ async function removeFriend(p: Person) {
     notify("已移除好友");
   } catch (error) {
     notify(error instanceof Error ? error.message : "移除失败");
+  }
+}
+async function deleteCurrentConversation() {
+  const peerId = directPeer(activeId.value);
+  const accountId = currentAccount.value?.id;
+  if (!peerId || !accountId || !active.value) return;
+  if (!confirm(`删除与 ${active.value.name} 的会话？只清空你可见的旧消息和未读，不删除对方的记录，也不会移除好友。`)) return;
+  try {
+    await clearDirectConversation(peerId);
+    if (currentAccount.value?.id !== accountId) return;
+    hiddenSeq++;
+    chatSeq++;
+    unreadSeq++;
+    unreadBusy = false;
+    closeHistorySearch();
+    closeMessageContext(false);
+    activeId.value = "";
+    hiddenPeers.value = [...new Set([...hiddenPeers.value, peerId])];
+    directMessages.value = [];
+    directUnread.value = { ...directUnread.value, [peerId]: 0 };
+    pendingSend = null;
+    void refreshHiddenConversations();
+    void refreshUnread();
+    notify("会话已从你的列表移除，好友关系保持不变");
+  } catch (error) {
+    notify(error instanceof Error ? error.message : "删除会话失败");
   }
 }
 function openFriendChat(p: Person) {
@@ -2371,6 +2421,7 @@ function visibility() {
   if (document.hidden) stopVoice();
   else if (currentAccount.value) {
     void refreshUnread();
+    void refreshHiddenConversations();
     void refreshGroups();
     void refreshNotices();
     if (page.value === "chat" && directPeer(activeId.value)) void refreshDirectChat();
@@ -2967,6 +3018,13 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="header-actions">
+            <button
+              v-if="directPeer(activeId)"
+              class="icon-button"
+              title="删除我的会话"
+              aria-label="删除我的会话"
+              @click="deleteCurrentConversation"
+            ><AppIcon name="trash" /></button>
             <button
               v-if="directPeer(activeId) || serverGroupId(activeId)"
               class="icon-button"

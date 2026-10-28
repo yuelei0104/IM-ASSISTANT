@@ -56,7 +56,7 @@ class DirectMessageServiceTest {
         when(access.requireUser("Bearer t")).thenReturn(23L);
         var older = new DirectMessage(11, 9, 23, ID, "早", LocalDateTime.now());
         var newer = new DirectMessage(12, 23, 9, ID, "晚", LocalDateTime.now());
-        when(dao.history(9, 23, null, 2)).thenReturn(List.of(newer, older));
+        when(dao.history(9, 23, 23, 9, null, 2)).thenReturn(List.of(newer, older));
 
         var result = service.history("Bearer t", 9, null, 1);
         assertEquals(List.of(newer), result.messages());
@@ -69,11 +69,11 @@ class DirectMessageServiceTest {
         when(access.requireUser("Bearer t")).thenReturn(23L);
         var first = new DirectMessage(12, 9, 23, ID, "一", LocalDateTime.now());
         var second = new DirectMessage(13, 23, 9, ID, "二", LocalDateTime.now());
-        when(dao.after(9, 23, 11, 2)).thenReturn(List.of(first, second));
+        when(dao.after(9, 23, 23, 9, 11, 2)).thenReturn(List.of(first, second));
         var result = service.sync("Bearer t", 9, 11, 1);
         assertEquals(List.of(first), result.messages());
         assertEquals(12L, result.nextAfterId());
-        verify(dao).after(9, 23, 11, 2);
+        verify(dao).after(9, 23, 23, 9, 11, 2);
         assertThrows(ChatException.class, () -> service.sync("Bearer t", 23, 11, 1));
         assertThrows(ChatException.class, () -> service.sync("Bearer t", 9, -1, 1));
         assertThrows(ChatException.class, () -> service.sync("Bearer t", 9, 11, 51));
@@ -120,14 +120,14 @@ class DirectMessageServiceTest {
         when(access.requireUser("Bearer t")).thenReturn(23L);
         var newer = new DirectMessage(12, 23, 9, ID, "100%_完成", LocalDateTime.now());
         var older = new DirectMessage(11, 9, 23, ID, "100%_回顾", LocalDateTime.now());
-        when(dao.search(9, 23, "100=%=_", null, 2)).thenReturn(List.of(newer, older));
+        when(dao.search(9, 23, 23, 9, "100=%=_", null, 2)).thenReturn(List.of(newer, older));
         var page = service.search("Bearer t", 9, " 100%_ ", null, 1);
         assertEquals(List.of(newer), page.messages());
         assertEquals(12L, page.nextBeforeId());
-        verify(dao).search(9, 23, "100=%=_", null, 2);
+        verify(dao).search(9, 23, 23, 9, "100=%=_", null, 2);
         assertThrows(ChatException.class, () -> service.search("Bearer t", 23, "关键词", null, 20));
         assertThrows(ChatException.class, () -> service.search("Bearer t", 9, "%", null, 20));
-        verify(dao, times(1)).search(anyLong(), anyLong(), any(), any(), anyInt());
+        verify(dao, times(1)).search(anyLong(), anyLong(), anyLong(), anyLong(), any(), any(), anyInt());
     }
 
     @Test
@@ -157,10 +157,36 @@ class DirectMessageServiceTest {
         when(access.requireUser("Bearer t")).thenReturn(23L);
         var first = new MessageRecall(8, 42, LocalDateTime.now());
         var next = new MessageRecall(9, 43, LocalDateTime.now());
-        when(dao.recalls(9, 23, 5, 2)).thenReturn(List.of(first, next));
+        when(dao.recalls(9, 23, 23, 9, 5, 2)).thenReturn(List.of(first, next));
         var page = service.recalls("Bearer t", 9, 5, 1);
         assertEquals(List.of(first), page.items());
         assertEquals(8L, page.nextAfterId());
         assertThrows(ChatException.class, () -> service.recalls("Bearer t", 23, 0, 50));
+    }
+
+    @Test
+    void clearingOnlyAdvancesTheAuthenticatedUsersBoundary() {
+        when(access.requireUser("Bearer a")).thenReturn(23L);
+        when(dao.lastPairMessageId(9, 23)).thenReturn(42L);
+        service.clearConversation("Bearer a", 9);
+        var ordered = inOrder(dao);
+        ordered.verify(dao).ensurePair(9, 23);
+        ordered.verify(dao).lockPair(9, 23);
+        ordered.verify(dao).lastPairMessageId(9, 23);
+        ordered.verify(dao).clearConversation(23, 9, 42);
+        verify(dao, never()).clearConversation(eq(9L), eq(23L), anyLong());
+        assertThrows(ChatException.class, () -> service.clearConversation("Bearer a", 23));
+        when(dao.hiddenConversations(23)).thenReturn(List.of(9L));
+        assertEquals(List.of(9L), service.hiddenConversations("Bearer a"));
+    }
+
+    @Test
+    void reusedMessageIdFromClearedHistoryIsRejected() {
+        when(access.requireFriend("Bearer t", 9)).thenReturn(23L);
+        when(dao.byClientId(23, ID)).thenReturn(new DirectMessage(42, 23, 9, ID, "你好", LocalDateTime.now()));
+        when(dao.clearCursor(23, 9)).thenReturn(42L);
+        assertEquals(HttpStatus.CONFLICT, assertThrows(ChatException.class,
+                () -> service.send("Bearer t", 9, new Send(ID, "你好"))).status());
+        verifyNoInteractions(events);
     }
 }
