@@ -95,11 +95,12 @@ function Wait-Web([int]$port, $entry) {
     throw "web health timed out; inspect $stateDirectory\web.err.log"
 }
 
-function Read-AppPassword {
+function Read-StackPassword([string]$name) {
     $envFile = Join-Path $backend '.env'
     if (-not (Test-Path $envFile)) { throw "Create $envFile from .env.example first" }
+    $pattern = '^\s*' + [regex]::Escape($name) + '\s*=\s*(.*?)\s*$'
     foreach ($line in Get-Content $envFile) {
-        if ($line -match '^\s*IM_MYSQL_PASSWORD\s*=\s*(.*?)\s*$') {
+        if ($line -match $pattern) {
             $value = $Matches[1]
             if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or
                 ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
@@ -107,7 +108,7 @@ function Read-AppPassword {
             return $value
         }
     }
-    throw 'IM_MYSQL_PASSWORD is missing in im-backend/.env'
+    throw "$name is missing in im-backend/.env"
 }
 
 function Wait-Infrastructure([int]$timeoutSeconds = 150) {
@@ -124,13 +125,15 @@ function Wait-Infrastructure([int]$timeoutSeconds = 150) {
             $mysqlReady = $LASTEXITCODE -eq 0
             $reply = & docker compose --profile kafka exec -T redis redis-cli ping 2>&1
             $redisReady = $LASTEXITCODE -eq 0 -and (@($reply) -contains 'PONG')
+            $vectorTable = & docker compose --profile kafka exec -T pgvector psql -U im_vector -d im_vectors -Atqc "SELECT to_regclass('public.im_group_message_embedding')" 2>&1
+            $vectorReady = $LASTEXITCODE -eq 0 -and (@($vectorTable) -contains 'im_group_message_embedding')
             $null = & docker compose --profile kafka exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list 2>&1
             $kafkaReady = $LASTEXITCODE -eq 0
         } finally { $ErrorActionPreference = $previousPreference }
-        if ($mysqlReady -and $redisReady -and $kafkaReady) { return }
+        if ($mysqlReady -and $redisReady -and $vectorReady -and $kafkaReady) { return }
         Start-Sleep -Seconds 3
     }
-    throw "Infrastructure not ready: mysql=$mysqlReady redis=$redisReady kafka=$kafkaReady; run docker compose --profile kafka ps --all and logs"
+    throw "Infrastructure not ready: mysql=$mysqlReady redis=$redisReady pgvector=$vectorReady kafka=$kafkaReady; run docker compose --profile kafka ps --all and logs"
 }
 
 function Launch([string]$service, [string]$executable, [string[]]$arguments,
@@ -176,7 +179,7 @@ function Check-WebSocket([string]$url, [string]$label, [int]$retrySeconds = 0) {
 function Smoke([int]$port) {
     Push-Location $backend
     try { Wait-Infrastructure 12 } finally { Pop-Location }
-    Write-Host 'MySQL, Redis and Kafka: ready'
+    Write-Host 'MySQL, Redis, pgvector and Kafka: ready'
     foreach ($item in @(
         [pscustomobject]@{ Name = 'user'; Port = 8081 }
         [pscustomobject]@{ Name = 'chat-a'; Port = 8082 }
@@ -218,7 +221,8 @@ switch ($Action) {
                 Where-Object { $_.LocalAddress -eq '127.0.0.1' -or $_.LocalAddress -eq '::1' }
             if ($inUse) { throw "Port $port is already in use on loopback by PID $($inUse[0].OwningProcess); close that process first" }
         }
-        $env:IM_MYSQL_PASSWORD = Read-AppPassword
+        $env:IM_MYSQL_PASSWORD = Read-StackPassword 'IM_MYSQL_PASSWORD'
+        $env:IM_PGVECTOR_PASSWORD = Read-StackPassword 'IM_PGVECTOR_PASSWORD'
         $env:IM_KAFKA_ENABLED = 'true'
         $env:IM_KAFKA_BOOTSTRAP = '127.0.0.1:19092'
         $env:VITE_IM_GATEWAY_URL = 'http://127.0.0.1:8080'
@@ -247,7 +251,7 @@ switch ($Action) {
         $node = (Get-Command node.exe -ErrorAction Stop).Source
         Push-Location $backend
         try {
-            & docker compose --profile kafka up -d mysql redis kafka
+            & docker compose --profile kafka up -d mysql redis pgvector kafka
             if ($LASTEXITCODE -ne 0) { throw 'Docker Compose up failed' }
             Wait-Infrastructure
             & docker compose --profile kafka exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --create --if-not-exists --topic im.chat.notifications.v1 --partitions 6 --replication-factor 1
@@ -341,7 +345,8 @@ switch ($Action) {
         if ($occupied.Count -gt 0) { throw "Port 8083 is occupied by PID $($occupied[0].OwningProcess); refusing to replace it" }
         $jar = Join-Path $backend 'im-chat-service\target\im-chat-service-0.0.1-SNAPSHOT.jar'
         if (-not (Test-Path $jar)) { throw "Missing $jar; rebuild the chat service" }
-        $env:IM_MYSQL_PASSWORD = Read-AppPassword
+        $env:IM_MYSQL_PASSWORD = Read-StackPassword 'IM_MYSQL_PASSWORD'
+        $env:IM_PGVECTOR_PASSWORD = Read-StackPassword 'IM_PGVECTOR_PASSWORD'
         $env:IM_KAFKA_ENABLED = 'true'
         $env:IM_KAFKA_BOOTSTRAP = '127.0.0.1:19092'
         $java = (Get-Command java.exe -ErrorAction Stop).Source

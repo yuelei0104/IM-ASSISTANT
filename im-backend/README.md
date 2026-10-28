@@ -8,11 +8,13 @@ notepad .env
 docker compose up -d
 docker compose ps
 docker compose exec redis redis-cli ping
+docker compose exec pgvector pg_isready -U im_vector -d im_vectors
 docker compose exec mysql mysql -uim_user -p im_assistant
 ```
 
 Enter `IM_MYSQL_PASSWORD` from `.env` when MySQL prompts for a password.
-Redis responds with `PONG`. Leave the MySQL shell with `exit`.
+Redis responds with `PONG` and PostgreSQL reports it is accepting connections.
+Leave the MySQL shell with `exit`.
 
 ## Repeatable Windows local stack
 
@@ -21,7 +23,8 @@ Vite and the existing Docker infrastructure), use the PowerShell launcher from
 `D:\im-assistant\im-backend`. This is a **loopback development deployment**, not
 an internet-facing production setup. Install Docker Desktop, Java 21 and Node 22
 before starting (Python 3 is needed for the separate probes). Copy `.env.example` to `.env` and set both MySQL
-passwords; the launcher reads the app password without printing it.
+passwords plus `IM_PGVECTOR_PASSWORD`; the launcher reads them without printing them.
+For an existing `.env`, add `IM_PGVECTOR_PASSWORD=<a-new-local-password>` before starting.
 
 ```powershell
 Set-Location D:\im-assistant\im-backend
@@ -33,7 +36,7 @@ Set-Location D:\im-assistant\im-backend
 `-Build` runs the Maven package/tests and `npm ci`/frontend build before starting
 anything. Subsequent runs can use `start` alone when the jars and dependencies
 have not changed. Open `http://127.0.0.1:5173/` and register using the
-development code shown in the UI. The launcher starts MySQL, Redis and Kafka
+development code shown in the UI. The launcher starts MySQL, Redis, pgvector and Kafka
 with Compose, checks their readiness, creates the notification topic if needed,
 then starts 8081, 8082, 8083, 8080 and Vite in that order. It refuses a backend
 port already owned on loopback. After Docker and Java are ready it picks the
@@ -51,7 +54,7 @@ requests, notices and tasks in China Standard Time (`Asia/Shanghai`). An
 explicit offset in a timestamp takes precedence. Calendar-only task due dates
 use the China Standard Time day boundary.
 
-`smoke` checks MySQL, Redis and Kafka, all four Actuator health endpoints, the web page, an expected
+`smoke` checks MySQL, Redis, pgvector and Kafka, all four Actuator health endpoints, the web page, an expected
 unauthenticated JSON response through web → gateway → user service, and a
 WebSocket handshakes directly with chat, then through the gateway and web proxy.
 The two routed handshakes retry for at most 30 seconds while the gateway checks
@@ -65,7 +68,7 @@ not killed. To stop everything started by the script:
 
 ```powershell
 .\tools\local_stack.ps1 stop
-# Also pause the project's MySQL, Redis and Kafka containers (keeps their data):
+# Also pause the project's MySQL, Redis, pgvector and Kafka containers (keeps their data):
 .\tools\local_stack.ps1 stop -StopInfrastructure
 ```
 
@@ -79,8 +82,9 @@ outside your machine.
 
 For backend applications running directly on Windows, use MySQL at
 `127.0.0.1:13307` (database `im_assistant`, user `im_user`) and Redis at
-`127.0.0.1:16380`. The MySQL database and user are initialized only when the
-MySQL volume is first created; changing `.env` later does not change them.
+`127.0.0.1:16380`, plus pgvector at `127.0.0.1:15432` (database `im_vectors`,
+user `im_vector`). Database users/passwords are initialized only when their
+named volumes are first created; changing `.env` later does not change them.
 
 Run `docker compose stop` to pause these containers, or `docker compose up -d`
 to start them again. Named volumes retain data across container restarts.
@@ -462,9 +466,15 @@ and truncates each input to 500 characters. It rechecks membership, join cursor
 and live source visibility **after** inference. The response is not stored and
 uses `Cache-Control: no-store`.
 
-LangChain4j embeds the permitted messages and question using a local Ollama
-embedding model, performs top-three vector retrieval in a **request-local**
-`InMemoryEmbeddingStore`, then uses a LangChain4j AI Service to answer. A
+LangChain4j embeds the permitted messages and question using local Ollama
+`bge-m3` (1024 dimensions). PostgreSQL with pgvector persists each eligible
+message's embedding and SHA-256 content hash, keyed by group, message and model;
+it stores no group message text. A later question reuses unchanged embeddings.
+The query first limits rows to the caller's at-most-30 authorized message IDs,
+then pgvector ranks this bounded set by cosine distance and returns the top
+three IDs. MySQL source visibility is checked again before returning an answer.
+The index uses exact ranking over the bounded set rather than global ANN search.
+LangChain4j's AI Service then generates the answer. A
 single `@Tool` allows the model to inspect a message from that same authorized
 snapshot by ID. The tool has no write operations or access to other groups.
 Short acknowledgements are skipped; the response is limited to a concise answer
@@ -475,10 +485,13 @@ are rechecked after inference before returning a supported answer.
 When one short message explicitly matches the question but a small model
 omits the required citation format, the service can quote that exact message
 with its verified ID. It does not make this fallback for unrelated messages.
-There is no persistent or shared vector index, no PGVector/Milvus, no AI Kafka
-queue, no autonomous task creation, and no cross-request chat memory. Building
-the vectors again on each question makes this a small-group prototype rather
-than a large-corpus search service. Group text stays on local Ollama.
+Recalling a message or dissolving a group schedules vector removal after the
+MySQL transaction commits. If PostgreSQL is temporarily unavailable during
+cleanup, an old vector may remain until manual cleanup; MySQL eligibility and
+live source checks still prevent it from becoming a cited answer. There is no
+AI Kafka queue, autonomous task creation or cross-request chat memory. This
+remains a small-group RAG workflow rather than an enterprise knowledge base.
+Group text stays on local Ollama.
 
 To enable the feature, download a local embedding model in addition to the
 chat model, then stop and restart chat-service. With `local_stack.ps1`, set
@@ -487,6 +500,7 @@ the variables in the **same PowerShell session** before `start -Build`:
 ```powershell
 ollama pull bge-m3
 Set-Location D:\im-assistant\im-backend
+# Add IM_PGVECTOR_PASSWORD to .env if upgrading an existing checkout.
 .\tools\local_stack.ps1 stop
 $env:IM_SUMMARY_MODEL = 'qwen3:4b'
 $env:IM_AGENT_MODEL = 'qwen3:4b'
@@ -498,7 +512,10 @@ For a manually started chat-service, set the same variables in each chat node's
 PowerShell window **before** starting it. If the embedding model or chat model
 is missing, the Agent endpoint returns 503; normal messaging still works.
 `IM_AGENT_MODEL` defaults to `IM_SUMMARY_MODEL` and then `qwen3:4b`;
-`IM_AGENT_EMBED_MODEL` must still name a locally installed embedding model.
+`IM_AGENT_EMBED_MODEL` must still name the locally installed `bge-m3` model
+or another embedding model with exactly 1024 dimensions. PostgreSQL must be
+running; the Agent endpoint returns 503 if it cannot connect. Normal messaging
+and summaries continue to use MySQL and do not need the vector index.
 Ask from a real discussion room in the right panel. Task suggestions are only
 text: the user must review and explicitly create any private task. Verify with
 two members and a later-invited account; the latter must not receive old message
@@ -522,7 +539,9 @@ The script creates two disposable friends and a group, then verifies an
 explicit topic/decision/task summary and its exact source messages, a factual
 answer with the one supporting message, an unknown question with no citations,
 rejection of a malicious instruction embedded in a group message, and removal
-of recalled facts from the Agent and saved summaries. It then runs the
+of recalled facts from the Agent and saved summaries. It checks the pgvector
+index has persisted embeddings and clears them when dissolving the temporary
+group. It then runs the
 three-account membership/privacy probe with both `--check-summary` and
 `--check-agent`. Every asserted check must print `PASS`; any `FAIL` is an
 acceptance failure. If testing model quality repeatedly, use `--quality-only`

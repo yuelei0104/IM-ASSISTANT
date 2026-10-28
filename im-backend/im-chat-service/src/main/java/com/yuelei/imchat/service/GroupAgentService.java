@@ -38,7 +38,7 @@ public class GroupAgentService {
                         m.body().substring(0, Math.min(m.body().length(), 500))))
                 .toList();
         if (candidates.isEmpty()) throw new ChatException(HttpStatus.BAD_REQUEST, "群内还没有可检索的消息");
-        GroupAgentEngine.Draft draft = engine.answer(question, candidates);
+        GroupAgentEngine.Draft draft = engine.answer(groupId, question, candidates);
         if (draft == null || draft.answer() == null || draft.answer().isBlank()
                 || draft.answer().length() > 2000 || draft.sourceIds() == null
                 || draft.contextIds() == null)

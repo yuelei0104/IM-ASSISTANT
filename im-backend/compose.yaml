@@ -21,6 +21,23 @@ services:
     volumes:
       - redis_data:/data
 
+  pgvector:
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
+    environment:
+      POSTGRES_DB: im_vectors
+      POSTGRES_USER: im_vector
+      POSTGRES_PASSWORD: ${IM_PGVECTOR_PASSWORD:?Set IM_PGVECTOR_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+      - ./pgvector/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U im_vector -d im_vectors"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   kafka-volume-init:
     profiles: [kafka]
     image: apache/kafka:4.1.1
@@ -59,4 +76,5 @@ services:
 volumes:
   mysql_data:
   redis_data:
+  pgvector_data:
   kafka_data:

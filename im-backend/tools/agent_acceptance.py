@@ -2,7 +2,7 @@
 """Run the local Agent quality and access acceptance against disposable accounts.
 
 Requires the user and chat services in dev mode, Ollama chat and embedding models,
-and the local MySQL/Redis stack. Only loopback HTTP URLs are accepted. This script
+and the local MySQL/Redis/pgvector stack. Only loopback HTTP URLs are accepted. This script
 creates real accounts/messages and dissolves its temporary group when finished.
 """
 
@@ -17,6 +17,18 @@ from group_privacy_probe import ProbeFailure, call, check, expect, loopback_url
 
 
 NO_EVIDENCE = "当前可见的群消息中没有足够依据回答这个问题。"
+
+
+def vector_count(group_id):
+    query = f"SELECT COUNT(*) FROM im_group_message_embedding WHERE group_id = {int(group_id)}"
+    result = subprocess.run([
+        "docker", "compose", "--profile", "kafka", "exec", "-T", "pgvector",
+        "psql", "-U", "im_vector", "-d", "im_vectors", "-Atqc", query,
+    ], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
+       timeout=15, check=False)
+    if result.returncode != 0 or not result.stdout.strip().isdigit():
+        raise ProbeFailure("pgvector query failed; check docker compose --profile kafka ps")
+    return int(result.stdout.strip())
 
 
 def register(user_url, suffix, role):
@@ -129,6 +141,8 @@ def quality_check(user_url, chat_url):
                                      {"question": question}, timeout=180),
                                 messages[2], "李明")
         print("PASS: factual answer cites only the task message (answer: " + answer + ")")
+        check(vector_count(group["id"]) >= 1, "Agent did not persist message vectors in pgvector")
+        print("PASS: authorized message embeddings persisted in pgvector")
         budget = "项目预算是多少？"
         require_answer("missing fact", call(chat_url, path + "/agent/ask", a,
                                             {"question": budget}, timeout=180))
@@ -154,6 +168,8 @@ def quality_check(user_url, chat_url):
         if status != 204:
             print(f"WARNING: could not dissolve disposable group {group['id']} (HTTP {status})",
                   file=sys.stderr)
+    check(vector_count(group["id"]) == 0, "dissolved group's vectors were not removed")
+    print("PASS: dissolving group removed its persisted vectors")
     print("Two disposable accounts remain in the local development database; test group dissolved.")
 
 

@@ -145,6 +145,7 @@ public class GroupService {
         dao.deleteMembers(groupId);
         if (dao.deleteGroup(groupId) != 1)
             throw new ChatException(HttpStatus.CONFLICT, "讨论室解散失败");
+        events.publishEvent(GroupVectorInvalidation.group(groupId));
         events.publishEvent(new GroupEvent(groupId, 0, recipients));
     }
 
@@ -225,6 +226,7 @@ public class GroupService {
         if (dao.recall(groupId, messageId, userId) != 1)
             throw new ChatException(HttpStatus.CONFLICT, "只能在发送后两分钟内撤回");
         dao.addRecall(groupId, messageId);
+        events.publishEvent(GroupVectorInvalidation.message(groupId, messageId));
         var recipients = notices.noticeRecipients(messageId);
         notices.deleteForMessage(messageId);
         summaries.deleteContaining(groupId, messageId);

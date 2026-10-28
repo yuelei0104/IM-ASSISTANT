@@ -2,7 +2,7 @@ package com.yuelei.imchat.service;
 
 import java.util.List;
 
-/** A request-scoped, non-persistent RAG corpus; candidates are already authorized. */
+/** Candidates are scoped to the current member before any vector lookup. */
 public interface GroupAgentEngine {
     String NO_EVIDENCE = "当前可见的群消息中没有足够依据回答这个问题。";
     record Candidate(long id, String text) { }
@@ -12,5 +12,5 @@ public interface GroupAgentEngine {
         }
     }
 
-    Draft answer(String question, List<Candidate> visibleMessages);
+    Draft answer(long groupId, String question, List<Candidate> visibleMessages);
 }

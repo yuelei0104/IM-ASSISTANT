@@ -7,8 +7,6 @@ import dev.langchain4j.model.ollama.OllamaChatModel;
 import dev.langchain4j.model.ollama.OllamaEmbeddingModel;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.SystemMessage;
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
-import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -16,7 +14,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,15 +26,18 @@ public class LocalLangChain4jGroupAgent implements GroupAgentEngine {
     private final String chatModelName;
     private final String embeddingModelName;
     private final String baseUrl;
+    private final GroupVectorStore vectors;
 
     public LocalLangChain4jGroupAgent(@Value("${im.agent.model:}") String chatModelName,
                                       @Value("${im.agent.embedding-model:}") String embeddingModelName,
-                                      @Value("${im.summary.port:11434}") int port) {
+                                      @Value("${im.summary.port:11434}") int port,
+                                      GroupVectorStore vectors) {
         if (port < 1 || port > 65535) throw new IllegalArgumentException("本地模型端口无效");
         this.chatModelName = chatModelName.trim();
         this.embeddingModelName = embeddingModelName.trim();
         // Never accept an arbitrary URL: group content stays on local Ollama.
         this.baseUrl = "http://127.0.0.1:" + port;
+        this.vectors = vectors;
     }
 
     interface Researcher {
@@ -74,7 +74,7 @@ public class LocalLangChain4jGroupAgent implements GroupAgentEngine {
     }
 
     @Override
-    public Draft answer(String question, List<Candidate> visibleMessages) {
+    public Draft answer(long groupId, String question, List<Candidate> visibleMessages) {
         // Short acknowledgements add noise to a small group's vector search.
         List<Candidate> usefulMessages = visibleMessages.stream()
                 .filter(candidate -> !isAcknowledgement(candidate.text()))
@@ -86,37 +86,41 @@ public class LocalLangChain4jGroupAgent implements GroupAgentEngine {
         if (embeddingModelName.isBlank())
             throw new ChatException(HttpStatus.SERVICE_UNAVAILABLE,
                     "请先配置本地向量模型 IM_AGENT_EMBED_MODEL");
+        if (!vectors.configured())
+            throw new ChatException(HttpStatus.SERVICE_UNAVAILABLE, "请先配置群聊向量库 IM_PGVECTOR_PASSWORD");
         String stage = "model setup";
         try {
             var chat = OllamaChatModel.builder().baseUrl(baseUrl).modelName(chatModelName)
                     .temperature(0.2).timeout(Duration.ofSeconds(120)).build();
             var embeddings = OllamaEmbeddingModel.builder().baseUrl(baseUrl)
                     .modelName(embeddingModelName).build();
-            // Index only the authenticated caller's visible, bounded snapshot. No
-            // shared vector index can retain a revoked member's group content.
-            var store = new InMemoryEmbeddingStore<TextSegment>();
-            var segments = new ArrayList<TextSegment>();
-            var bySegment = new HashMap<String, Candidate>();
+            // The persistent index never supplies raw text or grants access.
+            // The service passed only the caller's currently visible messages.
             var byId = new HashMap<Long, String>();
             for (Candidate candidate : usefulMessages) {
-                String content = "消息 " + candidate.id() + "：" + candidate.text();
-                segments.add(TextSegment.from(content));
-                bySegment.put(content, candidate);
                 byId.put(candidate.id(), candidate.text());
             }
             stage = "embedding";
-            store.addAll(embeddings.embedAll(segments).content(), segments);
-            var query = EmbeddingSearchRequest.builder()
-                    .queryEmbedding(embeddings.embed(question).content())
-                    .maxResults(3).build();
+            var eligibleIds = usefulMessages.stream().map(Candidate::id).toList();
+            Map<Long, String> storedHashes = vectors.hashes(groupId, embeddingModelName, eligibleIds);
+            List<Candidate> missing = usefulMessages.stream()
+                    .filter(c -> !GroupVectorStore.hash(c.text()).equals(storedHashes.get(c.id())))
+                    .toList();
+            if (!missing.isEmpty()) {
+                var segments = missing.stream().map(c -> TextSegment.from("消息 " + c.id() + "：" + c.text())).toList();
+                var generated = embeddings.embedAll(segments).content().stream().map(e -> e.vector()).toList();
+                vectors.upsert(groupId, embeddingModelName, missing, generated);
+            }
+            var retrievedIds = vectors.nearest(groupId, embeddingModelName, eligibleIds,
+                    embeddings.embed(question).content().vector());
             var retrieved = new LinkedHashSet<Long>();
             var evidence = new StringBuilder();
-            for (var match : store.search(query).matches()) {
-                Candidate candidate = bySegment.get(match.embedded().text());
-                if (candidate != null) {
-                    retrieved.add(candidate.id());
-                    evidence.append("消息 ").append(candidate.id()).append("：")
-                            .append(candidate.text()).append('\n');
+            for (Long id : retrievedIds) {
+                String content = byId.get(id);
+                if (content != null) {
+                    retrieved.add(id);
+                    evidence.append("消息 ").append(id).append("：")
+                            .append(content).append('\n');
                 }
             }
             if (retrieved.isEmpty()) throw new ChatException(HttpStatus.BAD_GATEWAY, "未检索到可见消息");

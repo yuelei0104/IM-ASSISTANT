@@ -39,13 +39,13 @@ class GroupAgentServiceTest {
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
         var visible = message(43, "周一交付方案");
         when(groups.history(4, 42, null, 30)).thenReturn(List.of(visible));
-        when(engine.answer(eq("什么时候交付"), anyList()))
+        when(engine.answer(eq(4L), eq("什么时候交付"), anyList()))
                 .thenReturn(new GroupAgentEngine.Draft("建议周一交付。", List.of(43L)));
         when(groups.messageById(4, 43, 42)).thenReturn(visible);
         var answer = service.ask("member", 4, "什么时候交付");
         assertEquals("建议周一交付。", answer.answer());
         assertEquals(List.of(new GroupAgentService.Source(43, "周一交付方案")), answer.sources());
-        verify(engine).answer("什么时候交付", List.of(new GroupAgentEngine.Candidate(43, "周一交付方案")));
+        verify(engine).answer(4, "什么时候交付", List.of(new GroupAgentEngine.Candidate(43, "周一交付方案")));
     }
 
     @Test
@@ -53,7 +53,7 @@ class GroupAgentServiceTest {
         when(access.requireUser("member")).thenReturn(23L);
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42), null);
         when(groups.history(4, 42, null, 30)).thenReturn(List.of(message(43, "私密内容")));
-        when(engine.answer(anyString(), anyList()))
+        when(engine.answer(eq(4L), anyString(), anyList()))
                 .thenReturn(new GroupAgentEngine.Draft("私密内容", List.of(43L)));
         assertThrows(ChatException.class, () -> service.ask("member", 4, "讨论了什么"));
         verify(groups, never()).messageById(anyLong(), anyLong(), anyLong());
@@ -71,10 +71,10 @@ class GroupAgentServiceTest {
         when(access.requireUser("member")).thenReturn(23L);
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
         when(groups.history(4, 42, null, 30)).thenReturn(List.of(message(43, "需要撤回")));
-        when(engine.answer(anyString(), anyList()))
+        when(engine.answer(eq(4L), anyString(), anyList()))
                 .thenReturn(new GroupAgentEngine.Draft("结论", List.of(43L)));
         assertThrows(ChatException.class, () -> service.ask("member", 4, "讨论了什么"));
-        when(engine.answer(anyString(), anyList()))
+        when(engine.answer(eq(4L), anyString(), anyList()))
                 .thenReturn(new GroupAgentEngine.Draft("结论", List.of(41L)));
         assertThrows(ChatException.class, () -> service.ask("member", 4, "讨论了什么"));
     }
@@ -84,7 +84,7 @@ class GroupAgentServiceTest {
         when(access.requireUser("member")).thenReturn(23L);
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
         when(groups.history(4, 42, null, 30)).thenReturn(List.of(message(43, "好的")));
-        when(engine.answer(anyString(), anyList()))
+        when(engine.answer(eq(4L), anyString(), anyList()))
                 .thenReturn(new GroupAgentEngine.Draft(GroupAgentEngine.NO_EVIDENCE, List.of()));
         var result = service.ask("member", 4, "下次会议要做什么");
         assertEquals(GroupAgentEngine.NO_EVIDENCE, result.answer());
@@ -97,7 +97,7 @@ class GroupAgentServiceTest {
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
         var cited = message(43, "周一交设计稿");
         when(groups.history(4, 42, null, 30)).thenReturn(List.of(cited, message(44, "敏感资料")));
-        when(engine.answer(anyString(), anyList())).thenReturn(
+        when(engine.answer(eq(4L), anyString(), anyList())).thenReturn(
                 new GroupAgentEngine.Draft("周一交设计稿。", List.of(43L), List.of(43L, 44L)));
         when(groups.messageById(4, 43, 42)).thenReturn(cited);
         assertThrows(ChatException.class, () -> service.ask("member", 4, "何时交稿"));
