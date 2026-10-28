@@ -415,10 +415,11 @@ member's latest 30 eligible messages (each capped at 500 characters) to that
 local endpoint; model failures return a generic error without message text.
 Ensure the selected model runs locally rather than using Ollama cloud models.
 The summary prompt asks for only three concise fields: topic, decision and
-action item. A field without a clear basis becomes `未提及`. A response that
-contains only model self-analysis or does not follow this format is reduced to
-`未提及` fields before it can be saved; users can inspect the original messages
-to check omissions or any claim the model made.
+action item. A field without a clear basis becomes `未提及`. Model self-analysis
+and unstructured text are discarded; for missing fields, the server can quote
+only an explicit `议题：` / `结论：` / `待办：` line from a message in that caller's
+authorized source set. It does not infer unlabelled facts from keyword matches.
+Users can inspect the original messages to check omissions or unsupported claims.
 
 To check a generated summary against its inputs, a current group member can
 request `GET /api/chats/groups/{groupId}/summaries/{summaryId}/sources`.
@@ -490,6 +491,33 @@ running dev stack to verify outsider denial, pre-join exclusion, post-join
 retrieval, removal and rejoin boundaries with real local models. It creates
 three disposable accounts and dissolves the test group. Browser review of
 answer quality is still required.
+
+#### Agent end-to-end acceptance on the local development stack
+
+After `local_stack.ps1 start -Build` reports all services ready and both Ollama
+models are installed, run from `D:\im-assistant\im-backend`:
+
+```powershell
+python .\tools\agent_acceptance.py
+```
+
+The script creates two disposable friends and a group, then verifies an
+explicit topic/decision/task summary and its exact source messages, a factual
+answer with the one supporting message, an unknown question with no citations,
+rejection of a malicious instruction embedded in a group message, and removal
+of recalled facts from the Agent and saved summaries. It then runs the
+three-account membership/privacy probe with both `--check-summary` and
+`--check-agent`. Every asserted check must print `PASS`; any `FAIL` is an
+acceptance failure. If testing model quality repeatedly, use `--quality-only`
+to skip the longer membership probe. Test accounts and messages remain in the
+local development database; temporary groups are dissolved.
+
+The checks use a small synthetic fixture and cannot prove that every natural
+language summary is accurate. For final human review, ask a real group question
+whose answer is in one message, one with no answer, and inspect every cited
+message in the browser. Do not mark the feature accepted when a model returns
+an unsupported claim, even if HTTP requests and Maven tests pass. The local
+probe requires dev registration codes and must not target production.
 
 ### Private group translation preview
 

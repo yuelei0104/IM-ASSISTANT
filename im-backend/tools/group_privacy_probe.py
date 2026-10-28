@@ -120,7 +120,8 @@ def main():
     group_id = group["id"]
     path = f"/api/chats/groups/{group_id}"
     old = expect("send pre-join caption", call(args.chat_url, path + "/messages", a, {
-        "clientMsgId": str(uuid.uuid4()), "body": "仅原成员可见的字幕",
+        "clientMsgId": str(uuid.uuid4()),
+        "body": "原成员的字幕内容是：周二上午十点讨论新版登录页。",
         "mentionedUserIds": [], "kind": "CAPTION",
     }), 200)
     old_id = old["id"]
@@ -145,7 +146,7 @@ def main():
 
     if args.check_agent:
         result = expect("owner Agent answer", call(args.chat_url, path + "/agent/ask", a,
-                        {"question": "原成员的字幕是什么"}, timeout=180), 200)
+                        {"question": "原成员的字幕内容是什么？"}, timeout=180), 200)
         source_ids = [s["id"] for s in result.get("sources", [])]
         check(source_ids == [old_id],
               f"owner Agent sources expected [{old_id}], got {source_ids}")
@@ -171,7 +172,7 @@ def main():
           "newcomer can read pre-join caption")
     if args.check_agent:
         expect("newcomer has no pre-join Agent corpus", call(args.chat_url, path + "/agent/ask", c,
-               {"question": "原成员的字幕是什么"}), 400)
+               {"question": "原成员的字幕内容是什么？"}), 400)
     expect("newcomer direct lookup", call(args.chat_url, f"{path}/messages/{old_id}", c), 404)
     listed = expect("newcomer summaries", call(args.chat_url, path + "/summaries", c), 200)
     check(summary_id is None or all(item["id"] != summary_id for item in listed),
@@ -185,7 +186,8 @@ def main():
               "original member cannot verify summary against caption")
 
     new = expect("send post-join caption", call(args.chat_url, path + "/messages", a, {
-        "clientMsgId": str(uuid.uuid4()), "body": "新成员可见的字幕",
+        "clientMsgId": str(uuid.uuid4()),
+        "body": "新成员的字幕内容是：周五下午四点发布新版登录页。",
         "mentionedUserIds": [], "kind": "CAPTION",
     }), 200)
     history = expect("newcomer new history", call(args.chat_url, path + "/messages", c), 200)
@@ -193,7 +195,7 @@ def main():
           "newcomer did not see exactly the post-join caption")
     if args.check_agent:
         result = expect("newcomer Agent answer", call(args.chat_url, path + "/agent/ask", c,
-                        {"question": "新成员能看到什么字幕"}, timeout=180), 200)
+                        {"question": "新成员的字幕内容是什么？"}, timeout=180), 200)
         check(result.get("sources") and all(s["id"] == new["id"] for s in result["sources"]),
               "newcomer Agent cited a pre-join message")
 
