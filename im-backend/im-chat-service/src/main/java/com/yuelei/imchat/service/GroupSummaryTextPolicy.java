@@ -16,6 +16,10 @@ final class GroupSummaryTextPolicy {
             "用户要求|我需要|我的任务|提示词|系统指令|非可信文本|忽略.*指令|分析如下|思考过程");
     private static final Pattern INSTRUCTION = Pattern.compile(
             "忽略|泄露|系统消息|角色扮演|回答.*问题|执行.*指令|输出.*(密码|令牌)");
+    private static final Pattern TOPIC = Pattern.compile("^【([^】]{2,30})】(.+)$");
+    private static final Pattern CONCLUSION = Pattern.compile(
+            "^(?:今天的)?(?:第[一二三四五六七八九十]+条)?结论[：:]\\s*(.+)$");
+    private static final Pattern ASSIGNMENT = Pattern.compile("^[\\p{IsHan}]{2,6}负责.{3,}$");
 
     private GroupSummaryTextPolicy() { }
 
@@ -47,20 +51,49 @@ final class GroupSummaryTextPolicy {
         Map<String, String> fields = new HashMap<>();
         var parsed = LINE.matcher(proposed);
         while (parsed.find()) fields.put(parsed.group(1), parsed.group(2));
+        String topic = null;
+        String conclusion = null;
+        String task = null;
         for (GroupMessage message : messages) {
             String source = message.body().strip();
+            if (META.matcher(source).find() || INSTRUCTION.matcher(source).find()) continue;
             var match = LINE.matcher(source);
-            if (!match.find() || match.start() != 0) continue;
-            String key = match.group(1);
-            if (!UNKNOWN.equals(fields.get(key))) continue;
-            String value = match.group(2).strip();
-            if (value.isEmpty() || value.startsWith(UNKNOWN) || META.matcher(value).find()
-                    || INSTRUCTION.matcher(value).find()) continue;
-            fields.put(key, value.length() > 80 ? value.substring(0, 80) + "…" : value);
+            if (match.find() && match.start() == 0) {
+                String key = match.group(1);
+                if (UNKNOWN.equals(fields.get(key)) && valid(match.group(2)))
+                    fields.put(key, shorten(match.group(2)));
+                continue;
+            }
+            // Source messages can state facts without using the model's three labels.
+            var heading = TOPIC.matcher(source);
+            if (heading.matches()) {
+                if (valid(heading.group(2)) && heading.group(2).strip().length() > 8)
+                    topic = heading.group(1).strip();
+                source = heading.group(2).strip();
+            }
+            var decision = CONCLUSION.matcher(source);
+            if (conclusion == null && decision.matches() && valid(decision.group(1)))
+                conclusion = shorten(decision.group(1));
+            if (task == null && ASSIGNMENT.matcher(source).matches() && valid(source))
+                task = shorten(source);
         }
+        if (UNKNOWN.equals(fields.get("议题")) && topic != null) fields.put("议题", topic);
+        if (UNKNOWN.equals(fields.get("结论")) && conclusion != null) fields.put("结论", conclusion);
+        if (UNKNOWN.equals(fields.get("待办")) && task != null) fields.put("待办", task);
         return "议题：" + fields.getOrDefault("议题", UNKNOWN)
                 + "\n结论：" + fields.getOrDefault("结论", UNKNOWN)
                 + "\n待办：" + fields.getOrDefault("待办", UNKNOWN);
+    }
+
+    private static boolean valid(String value) {
+        String text = value.strip();
+        return !text.isEmpty() && !text.startsWith(UNKNOWN)
+                && !META.matcher(text).find() && !INSTRUCTION.matcher(text).find();
+    }
+
+    private static String shorten(String value) {
+        String text = value.strip();
+        return text.length() > 80 ? text.substring(0, 80) + "…" : text;
     }
 
     private static String empty() {
