@@ -1,2 +1,17 @@
 .idea/
 .env
+
+# WorkBuddy local project state
+.workbuddy/
+**/.workbuddy/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local run artefacts
+*.log
+
+# Downloaded installers and one-off patches
+/OllamaSetup/
+*.patch
