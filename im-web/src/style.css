@@ -1,20 +1,89 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap");
+/* ---------------------------------------------------------------------------
+   Design tokens — the single source for colour, type and radius.
+
+   Surfaces follow one rule: white panels flank a slightly sunken transcript,
+   so the eye lands on messages instead of on the chrome around them.
+   Every text token clears 4.5:1 against the surface it is used on.
+   --------------------------------------------------------------------------- */
 :root {
+  /* Surfaces */
+  --surface-app: #f5f6f9;
+  --surface-panel: #ffffff;
+  --surface-sunken: #eef1f6;
+  --surface-raised: #fafbfd;
+  --surface-soft: #f2f3f8;
+
+  /* Text */
+  --text-strong: #232838;
+  --text-body: #333a4a;
+  --text-muted: #5b6478;
+  --text-faint: #6b7488;
+
+  /* Brand */
+  --brand: #5c62ca;
+  --brand-strong: #484eb4;
+  --brand-soft: #e6e7ff;
+  --brand-tint: #f1f1fd;
+
+  /* Warm accent. A single violet hue cannot say "this one wants you", so
+     unread counts and overdue dates get the one warm family in the product:
+     --accent on light surfaces, --accent-bright on the dark rail. */
+  --accent: #b8512f;
+  --accent-ink: #9c4320;
+  --accent-bright: #ec8164;
+  --brand-ink: #343a94;
+
+  /* Lines and focus rings */
+  --line: #e6e8ef;
+  --line-soft: #edeef4;
+  --line-strong: #d7dae4;
+  --ring: #8588ea;
+  --ring-soft: #6c71e51a;
+
+  /* Semantic */
+  --danger: #b4392f;
+  --success: #2f7d54;
+
+  /* Type scale */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-headline: 25px;
+
+  /* Set by App.vue from the reader's font-size preference; this is the fallback. */
+  --message-size: 16px;
+
+  /* Radii */
+  --radius-sm: 11px;
+  --radius-md: 14px;
+  --radius-lg: 19px;
+  --radius-xl: 22px;
+
+  /* Chinese-first stack: no network fetch, no silent fallback. */
   font-family:
-    "DM Sans",
-    "Noto Sans SC",
+    "PingFang SC",
+    "HarmonyOS Sans SC",
+    "Microsoft YaHei",
+    system-ui,
     -apple-system,
-    BlinkMacSystemFont,
     "Segoe UI",
+    "DM Sans",
     sans-serif;
-  color: #243641;
-  background: #f5f8fa;
+  color: var(--text-body);
+  background: var(--surface-app);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
 * {
   box-sizing: border-box;
+}
+/* Height chain, not 100vh. A shell sized with 100vh can disagree with the
+   document box (browser chrome, zoom, embedded preview panes), and every pixel
+   of disagreement shows up as a strip of bare canvas under the rail. */
+html,
+body {
+  height: 100%;
 }
 body {
   margin: 0;
@@ -37,7 +106,7 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 3px solid #80cccb;
+  outline: 3px solid var(--ring);
   outline-offset: 2px;
 }
 h1,
@@ -50,19 +119,19 @@ svg {
   flex: none;
 }
 #app {
-  min-height: 100vh;
+  height: 100%;
 }
 .app-shell {
-  height: 100vh;
-  min-height: 640px;
+  height: 100%;
+  min-height: 0;
   display: flex;
   overflow: hidden;
-  background: #f6f8fa;
+  background: #f7f8f9;
 }
 .rail {
   width: 76px;
   background: #fff;
-  border-right: 1px solid #e8edef;
+  border-right: 1px solid #eaeaed;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -73,7 +142,7 @@ svg {
 .brand-mark {
   display: grid;
   place-items: center;
-  background: linear-gradient(145deg, #198e92, #2272a8);
+  background: linear-gradient(145deg, #888df5, #6268d7);
   color: #fff;
   border-radius: 14px;
 }
@@ -81,7 +150,7 @@ svg {
   height: 40px;
   width: 40px;
   margin: 28px 0 43px;
-  box-shadow: 0 7px 18px #167f9340;
+  box-shadow: 0 7px 18px #11163835;
 }
 .rail-links {
   display: flex;
@@ -105,8 +174,8 @@ svg {
 }
 .rail-link:hover,
 .rail-link.active {
-  background: #e9f7f7;
-  color: #168a91;
+  background: #ffffff1d;
+  color: #ffffff;
 }
 .rail-link.active:before {
   content: "";
@@ -115,19 +184,24 @@ svg {
   height: 22px;
   width: 3px;
   border-radius: 0 4px 4px 0;
-  background: #25a6aa;
+  background: #b3b3ff;
 }
 .rail-dot,
 .notice-dot {
   height: 7px;
   width: 7px;
-  background: #ec8164;
+  background: var(--accent-bright);
   border: 2px solid white;
   box-sizing: content-box;
   border-radius: 50%;
   position: absolute;
   right: 7px;
   top: 7px;
+}
+/* Bright coral only survives on the dark rail; on white it needs the deeper
+   shade to clear 3:1 as a non-text indicator. */
+.notice-dot {
+  background: var(--accent);
 }
 .rail-profile {
   margin-top: auto;
@@ -198,7 +272,7 @@ svg {
   min-width: 290px;
   flex: none;
   background: #fff;
-  border-right: 1px solid #e9edef;
+  border-right: 1px solid #eaebee;
   display: flex;
   flex-direction: column;
 }
@@ -209,7 +283,7 @@ svg {
   padding: 31px 26px 20px;
 }
 .overline {
-  color: #91a4af;
+  color: var(--text-muted);
   font-size: 10px;
   letter-spacing: 2px;
   font-weight: 700;
@@ -221,8 +295,8 @@ svg {
 }
 .count-pill {
   vertical-align: 4px;
-  background: #eaf4f5;
-  color: #348f96;
+  background: #efefff;
+  color: #5b60b8;
   border-radius: 8px;
   font-size: 11px;
   padding: 3px 8px;
@@ -234,7 +308,7 @@ svg {
   display: inline-grid;
   place-items: center;
   background: transparent;
-  color: #8597a2;
+  color: var(--text-muted);
   border: 0;
   border-radius: 10px;
   flex: none;
@@ -244,19 +318,19 @@ svg {
   color: #25898e;
 }
 .icon-button.outlined {
-  border: 1px solid #e1e9eb;
+  border: 1px solid #e3e4e8;
   color: #48888e;
 }
 .search-box {
   height: 42px;
-  border: 1px solid #eaf0f1;
-  background: #f6f8f9;
+  border: 1px solid #ececef;
+  background: #f7f7f8;
   border-radius: 10px;
   margin: 0 20px 25px;
   display: flex;
   align-items: center;
   gap: 9px;
-  color: #9baaaf;
+  color: var(--text-muted);
   padding: 0 12px;
 }
 .search-box input {
@@ -264,23 +338,23 @@ svg {
   border: 0;
   outline: 0;
   background: transparent;
-  color: #273d49;
+  color: var(--text-strong);
   font-size: 13px;
 }
 .search-box input::placeholder {
-  color: #abb8bd;
+  color: var(--text-faint);
 }
 .clear-button {
   border: 0;
   background: transparent;
-  color: #8999a1;
+  color: var(--text-muted);
   font-size: 20px;
 }
 .section-label {
   display: flex;
   justify-content: space-between;
   padding: 0 27px 14px;
-  color: #8b9da7;
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.3px;
@@ -303,7 +377,7 @@ svg {
   color: #2e424c;
 }
 .conversation-item:hover {
-  background: #f4f8f9;
+  background: #f6f6f7;
 }
 .conversation-item.selected {
   background: #eaf7f7;
@@ -330,12 +404,12 @@ svg {
 }
 .conversation-line small {
   font-size: 10px;
-  color: #a3b1b8;
+  color: var(--text-muted);
   white-space: nowrap;
 }
 .conversation-line.preview {
   font-size: 11px;
-  color: #8da0a8;
+  color: var(--text-muted);
 }
 .conversation-line.preview > span:first-child {
   overflow: hidden;
@@ -343,7 +417,7 @@ svg {
   text-overflow: ellipsis;
 }
 .unread-badge {
-  background: #25a5a8;
+  background: var(--accent);
   color: white;
   font-size: 10px;
   line-height: 19px;
@@ -353,7 +427,7 @@ svg {
   text-align: center;
 }
 .sidebar-bottom {
-  border-top: 1px solid #eff2f3;
+  border-top: 1px solid #f0f0f2;
   padding: 20px;
 }
 .sidebar-help {
@@ -369,7 +443,7 @@ svg {
 }
 .sidebar-help p {
   font-size: 10px;
-  color: #829ba0;
+  color: var(--text-muted);
   margin-top: 4px;
 }
 .help-icon,
@@ -388,7 +462,7 @@ svg {
   align-items: center;
   gap: 7px;
   margin: 17px 5px 0;
-  color: #a3b3bb;
+  color: var(--text-muted);
   font-size: 10px;
 }
 .status-dot {
@@ -403,14 +477,17 @@ svg {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #f8fafb;
+  background: #f9f9fa;
 }
 .chat-header {
   height: 85px;
   flex: none;
   padding: 0 29px;
+  /* Same column as the transcript: on a wide screen a full-bleed header left
+     the room name stranded 300px away from the messages. */
+  padding-inline: max(29px, calc((100% - 776px) / 2));
   background: #fff;
-  border-bottom: 1px solid #edf0f1;
+  border-bottom: 1px solid #edeef1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -432,7 +509,8 @@ svg {
   gap: 9px;
 }
 .title-row h2 {
-  font-size: 16px;
+  font-size: 20px;
+  letter-spacing: -0.4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -446,9 +524,9 @@ svg {
   white-space: nowrap;
 }
 .chat-heading p {
-  font-size: 11px;
-  color: #9aaaaf;
-  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -515,7 +593,7 @@ svg {
 .chat-notice {
   min-height: 35px;
   background: #f0f8f7;
-  color: #72969a;
+  color: var(--text-muted);
   text-align: center;
   font-size: 10px;
   display: flex;
@@ -536,12 +614,12 @@ svg {
 }
 .day-divider {
   text-align: center;
-  color: #a6b4bb;
+  color: var(--text-muted);
   font-size: 10px;
   margin: 4px 0 31px;
 }
 .day-divider span {
-  background: #eef2f4;
+  background: #f0f0f2;
   padding: 6px 14px;
   border-radius: 20px;
 }
@@ -573,7 +651,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: #90a0a8;
+  color: var(--text-muted);
   font-size: 10px;
   margin: 0 0 6px;
 }
@@ -586,7 +664,7 @@ svg {
 }
 .bubble {
   background: #fff;
-  border: 1px solid #edf0f1;
+  border: 1px solid #edeef1;
   border-radius: 5px 13px 13px 13px;
   padding: 12px 15px;
   box-shadow: 0 3px 10px #263e4a08;
@@ -614,7 +692,7 @@ svg {
   gap: 5px;
   align-items: flex-start;
   background: #f0f5f7;
-  color: #728b99;
+  color: var(--text-muted);
   margin-top: 6px;
   border-radius: 8px;
   padding: 8px 11px;
@@ -633,15 +711,15 @@ svg {
 .delivery {
   text-align: right;
   font-size: 10px;
-  color: #9eb0b4;
+  color: var(--text-muted);
   margin-top: 5px;
 }
 .system-message {
   margin: 18px auto;
   text-align: center;
   width: fit-content;
-  background: #edf2f4;
-  color: #8499a4;
+  background: #eff0f2;
+  color: var(--text-muted);
   padding: 6px 12px;
   border-radius: 20px;
   font-size: 11px;
@@ -658,11 +736,15 @@ svg {
 }
 .composer-zone {
   background: #fff;
-  border-top: 1px solid #e9edef;
+  border-top: 1px solid #eaebee;
   padding: 16px 25px 22px;
+  /* The transcript caps its column at 840px (776px of content). Without the
+     same inset here the input row keeps stretching on wide screens and stops
+     lining up with the messages it belongs to. */
+  padding-inline: max(32px, calc((100% - 776px) / 2));
 }
 .composer {
-  border: 1px solid #e3eaed;
+  border: 1px solid #e6e7ea;
   border-radius: 13px;
   padding: 12px 13px 10px;
   box-shadow: 0 4px 18px #233c4808;
@@ -683,7 +765,7 @@ svg {
   max-height: 170px;
 }
 .composer textarea::placeholder {
-  color: #b1bec3;
+  color: var(--text-faint);
 }
 .mention-picker {
   display: flex;
@@ -691,13 +773,13 @@ svg {
   gap: 7px;
   max-height: 110px;
   overflow: auto;
-  border-top: 1px solid #e3eaed;
+  border-top: 1px solid #e6e7ea;
   padding: 10px 0;
   font-size: 12px;
-  color: #647f89;
+  color: var(--text-muted);
 }
 .mention-picker button {
-  border: 1px solid #d5e8e5;
+  border: 1px solid #dbdde2;
   border-radius: 8px;
   padding: 5px 9px;
   background: #eff8f6;
@@ -713,7 +795,7 @@ svg {
 .tool-button {
   background: none;
   border: 0;
-  color: #93a4ab;
+  color: var(--text-muted);
   padding: 5px;
   display: grid;
   place-items: center;
@@ -734,7 +816,7 @@ svg {
 .caption-button:disabled { opacity: .5; cursor: not-allowed; }
 .composer-tip {
   font-size: 10px;
-  color: #afbdc2;
+  color: var(--text-muted);
   margin-left: 5px;
 }
 .send-button {
@@ -775,10 +857,10 @@ svg {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  color: #243746;
+  color: var(--text-body);
   line-height: 1.6;
 }
-.voice-partial { min-height: 20px; color: #697d8b; }
+.voice-partial { min-height: 20px; color: var(--text-muted); }
 .voice-actions { margin-top: 8px; }
 .voice-interim button {
   cursor: pointer;
@@ -806,8 +888,8 @@ svg {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: #8fa0a8;
-  background: #f5f7f7;
+  color: var(--text-muted);
+  background: #f5f5f7;
   border-radius: 10px;
   font-size: 12px;
 }
@@ -815,14 +897,14 @@ svg {
   width: 298px;
   flex: none;
   background: #fff;
-  border-left: 1px solid #e9edef;
+  border-left: 1px solid #eaebee;
   display: flex;
   flex-direction: column;
 }
 .assistant-header {
   min-height: 85px;
   padding: 26px 20px 17px;
-  border-bottom: 1px solid #eef1f2;
+  border-bottom: 1px solid #eeeff2;
   display: flex;
   justify-content: space-between;
 }
@@ -835,14 +917,14 @@ svg {
   font-size: 15px;
 }
 .assistant-header p {
-  color: #9eafb6;
+  color: var(--text-muted);
   font-size: 10px;
   margin-top: 8px;
 }
 .beta {
   color: #54a2a0;
   background: #e7f5f1;
-  font-size: 9px;
+  font-size: 10px;
   border-radius: 4px;
   padding: 3px 5px;
 }
@@ -858,7 +940,7 @@ svg {
   position: relative;
   overflow: hidden;
   background: linear-gradient(130deg, #eaf7f5, #eef5fb);
-  border: 1px solid #e5f0f1;
+  border: 1px solid #e9eaed;
   border-radius: 15px;
   padding: 17px 18px;
   height: 150px;
@@ -895,29 +977,29 @@ svg {
 .assist-hero small {
   display: block;
   margin-top: 5px;
-  color: #81a2a5;
+  color: var(--text-muted);
   font-size: 10px;
 }
 .assist-section {
   padding: 24px 1px;
-  border-bottom: 1px solid #edf1f1;
+  border-bottom: 1px solid #edeef1;
 }
 .agent-ask {
   display: grid;
   gap: 10px;
   margin-top: 14px;
   padding-bottom: 20px;
-  border-bottom: 1px solid #edf1f1;
+  border-bottom: 1px solid #edeef1;
 }
-.agent-ask label { font-size: 12px; color: #344b55; }
+.agent-ask label { font-size: 12px; color: var(--text-body); }
 .agent-question {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  border: 1px solid #d7e0e7;
+  border: 1px solid #dcdde2;
   border-radius: 9px;
   padding: 10px;
-  color: #273b48;
+  color: var(--text-body);
   background: white;
 }
 .assist-label {
@@ -931,14 +1013,14 @@ svg {
   color: #344b55;
 }
 .assist-description {
-  color: #9daeb5;
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 1.7;
   margin: 11px 0 15px;
 }
 .segmented {
   display: flex;
-  background: #f4f7f8;
+  background: #f5f5f7;
   border-radius: 8px;
   padding: 3px;
   gap: 3px;
@@ -946,7 +1028,7 @@ svg {
 .segmented button {
   border: 0;
   background: transparent;
-  color: #98aab1;
+  color: var(--text-muted);
   font-size: 11px;
   border-radius: 6px;
   padding: 7px 10px;
@@ -964,7 +1046,7 @@ svg {
   justify-content: center;
   gap: 7px;
   width: 100%;
-  border: 1px solid #dcebe9;
+  border: 1px solid #e1e2e6;
   background: #edf7f5;
   color: #318e92;
   border-radius: 8px;
@@ -977,8 +1059,8 @@ svg {
   background: #def1ee;
 }
 .summary-card {
-  background: #f8fbfb;
-  border: 1px solid #e8f1f0;
+  background: #f9f9fa;
+  border: 1px solid #ebebee;
   border-radius: 10px;
   padding: 11px;
   margin-top: 12px;
@@ -989,20 +1071,20 @@ svg {
   font-size: 10px;
 }
 .summary-card p {
-  color: #7c959e;
+  color: var(--text-muted);
   line-height: 1.6;
   font-size: 11px;
   margin: 8px 0;
 }
 .group-summary-item + .group-summary-item {
-  border-top: 1px solid #e8f1f0;
+  border-top: 1px solid #ebebee;
   margin-top: 14px;
   padding-top: 14px;
 }
 .summary-card .group-summary-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: #253b45;
+  color: var(--text-body);
   font-size: 13px;
 }
 .source-link {
@@ -1012,7 +1094,7 @@ svg {
   width: 100%;
   text-align: left;
   border: 0;
-  border-top: 1px solid #e8eeee;
+  border-top: 1px solid #e9eaed;
   background: none;
   padding: 8px 0;
   color: #4b7681;
@@ -1023,14 +1105,14 @@ svg {
   margin-top: 14px;
   width: 100%;
   height: 36px;
-  border: 1px solid #e5ebec;
+  border: 1px solid #e6e7eb;
   border-radius: 8px;
   padding: 0 10px;
   font-size: 11px;
   outline: 0;
 }
 .highlight-section p {
-  color: #8399a1;
+  color: var(--text-muted);
   font-size: 11px;
   margin: 12px 0;
 }
@@ -1046,8 +1128,8 @@ svg {
 }
 .assistant-footer {
   padding: 15px 20px;
-  border-top: 1px solid #edf1f2;
-  color: #a8b6bc;
+  border-top: 1px solid #eeeff1;
+  color: var(--text-muted);
   font-size: 10px;
   display: flex;
   align-items: center;
@@ -1075,7 +1157,7 @@ svg {
   margin: 8px 0;
 }
 .page-subtitle {
-  color: #91a4ac;
+  color: var(--text-muted);
   font-size: 13px;
 }
 .primary-button {
@@ -1114,7 +1196,7 @@ svg {
 .stat-card,
 .content-card {
   background: #fff;
-  border: 1px solid #e9eff0;
+  border: 1px solid #ebebee;
   border-radius: 15px;
   box-shadow: 0 7px 28px #30495206;
 }
@@ -1126,7 +1208,7 @@ svg {
   padding: 24px 27px;
 }
 .stat-card > span {
-  color: #889ba5;
+  color: var(--text-muted);
   font-size: 12px;
 }
 .stat-card strong {
@@ -1137,7 +1219,7 @@ svg {
 }
 .stat-card small {
   font-size: 11px;
-  color: #a4b3ba;
+  color: var(--text-muted);
 }
 .content-card {
   padding: 25px 27px;
@@ -1150,7 +1232,7 @@ svg {
 }
 .card-heading > span {
   font-size: 11px;
-  color: #a1b1b8;
+  color: var(--text-muted);
 }
 .person-row,
 .request-row,
@@ -1158,7 +1240,7 @@ svg {
 .notice-row {
   display: flex;
   align-items: center;
-  border-top: 1px solid #eff2f2;
+  border-top: 1px solid #eff0f2;
   min-height: 78px;
   gap: 13px;
 }
@@ -1180,7 +1262,7 @@ svg {
 .request-body p,
 .notice-body > span {
   font-size: 11px;
-  color: #94a6ae;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1190,7 +1272,7 @@ svg {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #aeb8bd;
+  background: #aeb1bd;
   vertical-align: 2px;
 }
 .presence.online {
@@ -1200,7 +1282,7 @@ svg {
   background: #e9b665;
 }
 .outline-button {
-  border: 1px solid #dce8e9;
+  border: 1px solid #e0e1e5;
   background: white;
   color: #4b9096;
   border-radius: 8px;
@@ -1216,15 +1298,15 @@ svg {
   background: #eff8f7;
 }
 .subdued {
-  color: #b2c0c4;
+  color: var(--text-muted);
 }
 .request-body strong span {
   font-weight: 400;
-  color: #a8b6bd;
+  color: var(--text-muted);
   font-size: 11px;
 }
 .request-body small {
-  color: #adbac0;
+  color: var(--text-muted);
   font-size: 10px;
 }
 .row-actions {
@@ -1242,7 +1324,7 @@ svg {
 .empty-state {
   text-align: center;
   padding: 45px 10px;
-  color: #99abb3;
+  color: var(--text-muted);
   display: flex;
   align-items: center;
   flex-direction: column;
@@ -1250,7 +1332,7 @@ svg {
   font-size: 12px;
 }
 .empty-state strong {
-  color: #5d7781;
+  color: var(--text-muted);
   font-size: 13px;
 }
 .empty-state.mini {
@@ -1267,10 +1349,10 @@ svg {
   padding: 12px 0;
 }
 .notice-row:hover {
-  background: #f8fbfb;
+  background: #f9f9fa;
 }
 .notice-row.unread .notice-body strong {
-  color: #228f95;
+  color: var(--accent-ink);
 }
 .notice-body span {
   overflow: hidden;
@@ -1287,7 +1369,7 @@ svg {
   border-radius: 12px;
 }
 .notice-row small {
-  color: #a8b7be;
+  color: var(--text-muted);
   font-size: 10px;
 }
 .notice-row .notice-dot {
@@ -1298,11 +1380,11 @@ svg {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #f6f9f9;
-  border: 1px solid #e9efef;
+  background: #f7f7f8;
+  border: 1px solid #eaebee;
   border-radius: 10px;
   padding: 0 12px;
-  color: #7aa6a7;
+  color: var(--text-muted);
   margin-bottom: 14px;
 }
 .add-task input {
@@ -1330,23 +1412,23 @@ svg {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  color: #536770;
+  color: var(--text-muted);
   font-size: 12px;
 }
 .task-date-field { display: inline-flex; align-items: center; gap: 9px; margin: 0 0 14px;
-  color: #536770; font-size: 12px; }
-.task-date-field input, .task-edit-panel input { border: 1px solid #d9e5e5; border-radius: 7px;
-  background: white; padding: 7px 9px; color: #30454b; }
+  color: var(--text-muted); font-size: 12px; }
+.task-date-field input, .task-edit-panel input { border: 1px solid #dcdde2; border-radius: 7px;
+  background: white; padding: 7px 9px; color: var(--text-strong); }
 .task-edit-panel { display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
-  padding: 12px; margin: 8px 0 15px; background: #f6f9f9; border-radius: 10px; }
-.task-edit-panel label { display: inline-flex; align-items: center; gap: 7px; color: #536770; font-size: 12px; }
+  padding: 12px; margin: 8px 0 15px; background: #f7f7f8; border-radius: 10px; }
+.task-edit-panel label { display: inline-flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 12px; }
 .task-edit-panel button { border: 0; border-radius: 7px; padding: 8px 12px;
   background: #e1f2f1; color: #267c80; font-weight: 700; cursor: pointer; }
-.task-overdue { color: #c15442; }
+.task-overdue { color: var(--accent-ink); }
 .summary-evidence { margin: 9px 0 0; padding: 9px 11px; border-radius: 9px;
-  background: #f3f8f8; color: #425b62; font-size: 12px; }
-.summary-evidence-row { padding: 8px 0; border-top: 1px solid #dce9e9; }
-.summary-evidence-row small { color: #70878d; }
+  background: #f5f5f6; color: var(--text-body); font-size: 12px; }
+.summary-evidence-row { padding: 8px 0; border-top: 1px solid #e0e1e5; }
+.summary-evidence-row small { color: var(--text-muted); }
 .summary-evidence-row p { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .todo-row > .text-button { white-space: nowrap; }
 .todo-label {
@@ -1368,7 +1450,7 @@ svg {
   width: 19px;
   height: 19px;
   flex: none;
-  border: 1.5px solid #c8d6da;
+  border: 1.5px solid #ccced6;
   border-radius: 6px;
   color: transparent;
   display: grid;
@@ -1380,16 +1462,16 @@ svg {
   color: white;
 }
 .todo-label input:focus-visible + .custom-check {
-  outline: 3px solid #80cccb;
+  outline: 3px solid var(--ring);
   outline-offset: 2px;
 }
 .todo-row.done .todo-label > span:last-child {
   text-decoration: line-through;
-  color: #aebbc0;
+  color: var(--text-muted);
 }
 .due,
 .source-small {
-  color: #9eafb6;
+  color: var(--text-muted);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -1408,7 +1490,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 16px;
-  border-top: 1px solid #eef2f3;
+  border-top: 1px solid #eff0f2;
   padding-top: 19px;
 }
 .profile-setting > div {
@@ -1422,7 +1504,7 @@ svg {
 }
 .profile-setting div span {
   font-size: 11px;
-  color: #a3b2b9;
+  color: var(--text-muted);
 }
 .account-contacts {
   display: grid;
@@ -1434,25 +1516,25 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  border: 1px solid #e7efef;
-  background: #f9fbfb;
+  border: 1px solid #e9eaed;
+  background: #fafafa;
   border-radius: 10px;
   padding: 12px;
   min-width: 0;
 }
 .account-contacts span {
-  color: #95a8b0;
+  color: var(--text-muted);
   font-size: 11px;
 }
 .account-contacts strong {
-  color: #3c606a;
+  color: var(--text-body);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 .bind-form {
   margin-top: 20px;
   padding-top: 20px;
-  border-top: 1px solid #edf1f1;
+  border-top: 1px solid #edeef1;
   display: grid;
   gap: 9px;
   max-width: 410px;
@@ -1464,17 +1546,17 @@ svg {
 .bind-form small {
   font-size: 11px;
   line-height: 1.6;
-  color: #93a7af;
+  color: var(--text-muted);
 }
 .bind-form label {
   font-size: 11px;
-  color: #5e7882;
+  color: var(--text-muted);
   margin-top: 4px;
 }
 .bind-form input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #e1e9eb;
+  border: 1px solid #e3e4e8;
   border-radius: 8px;
   font-size: 12px;
 }
@@ -1488,7 +1570,7 @@ svg {
   font-size: 11px;
 }
 .setting-row {
-  border-top: 1px solid #edf1f1;
+  border-top: 1px solid #edeef1;
   padding: 19px 0;
   display: flex;
   align-items: center;
@@ -1504,7 +1586,7 @@ svg {
 }
 .setting-row p,
 .danger-card p {
-  color: #a0b0b7;
+  color: var(--text-muted);
   font-size: 11px;
   margin-top: 6px;
 }
@@ -1514,7 +1596,7 @@ svg {
 .setting-input,
 .setting-row select {
   background: #fff;
-  border: 1px solid #e1e9eb;
+  border: 1px solid #e3e4e8;
   border-radius: 8px;
   color: #5f7780;
   padding: 9px 10px;
@@ -1530,7 +1612,7 @@ svg {
   display: block;
   width: 38px;
   height: 22px;
-  background: #d8e2e4;
+  background: #dbdce1;
   border-radius: 20px;
   position: relative;
   cursor: pointer;
@@ -1553,7 +1635,7 @@ svg {
   left: 19px;
 }
 .switch input:focus-visible + span {
-  outline: 3px solid #80cccb;
+  outline: 3px solid var(--ring);
   outline-offset: 2px;
 }
 .danger-card {
@@ -1601,7 +1683,7 @@ svg {
 }
 .drawer-identity p,
 .drawer-hint {
-  color: #9baeb4;
+  color: var(--text-muted);
   font-size: 11px;
   line-height: 1.7;
 }
@@ -1610,7 +1692,7 @@ svg {
   justify-content: space-between;
   align-items: center;
   margin: 15px 0 8px;
-  border-top: 1px solid #edf1f2;
+  border-top: 1px solid #eeeff1;
   padding-top: 19px;
   font-size: 12px;
 }
@@ -1623,13 +1705,13 @@ svg {
 }
 .member-row small {
   margin-left: auto;
-  color: #96acb1;
+  color: var(--text-muted);
 }
 .member-actions { margin-left: auto; display: inline-flex; gap: 8px; }
 .drawer-leave { margin-top: 14px; }
 .drawer-dissolve { margin-top: 14px; color: #b04747; }
 .message-recall { font-size: 11px; padding: 0 4px; }
-.bubble.recalled { color: #748c92; background: #edf2f3; font-style: italic; }
+.bubble.recalled { color: var(--text-muted); background: #eeeff2; font-style: italic; }
 .drawer-toggle {
   display: flex;
   justify-content: space-between;
@@ -1665,7 +1747,7 @@ svg {
 }
 .modal-lead {
   font-size: 12px;
-  color: #8c9fa8;
+  color: var(--text-muted);
   line-height: 1.6;
   margin: 17px 0 22px;
 }
@@ -1680,14 +1762,14 @@ svg {
 }
 .field-label span {
   font-weight: 400;
-  color: #aab7bd;
+  color: var(--text-muted);
 }
 .modal-card > input,
 .modal-card > textarea,
 .input-prefix,
 .auth-card > input {
   width: 100%;
-  border: 1px solid #e1e9eb;
+  border: 1px solid #e3e4e8;
   border-radius: 9px;
   background: #fff;
   padding: 11px 12px;
@@ -1700,7 +1782,7 @@ svg {
   align-items: center;
   gap: 4px;
   padding: 0 12px;
-  color: #92aab2;
+  color: var(--text-muted);
 }
 .input-prefix input {
   border: 0;
@@ -1708,7 +1790,7 @@ svg {
   flex: 1;
   padding: 11px 0;
   min-width: 0;
-  color: #334b56;
+  color: var(--text-strong);
 }
 .modal-card textarea {
   resize: vertical;
@@ -1716,7 +1798,7 @@ svg {
 .invite-list {
   max-height: 220px;
   overflow-y: auto;
-  border: 1px solid #eaf0f0;
+  border: 1px solid #ebecef;
   border-radius: 9px;
 }
 .invite-person {
@@ -1724,7 +1806,7 @@ svg {
   align-items: center;
   gap: 10px;
   padding: 10px;
-  border-bottom: 1px solid #eff2f2;
+  border-bottom: 1px solid #eff0f2;
   font-size: 12px;
   cursor: pointer;
 }
@@ -1735,7 +1817,7 @@ svg {
   flex: 1;
 }
 .invite-person small {
-  color: #a5b5bc;
+  color: var(--text-muted);
   margin-left: 4px;
 }
 .invite-person input {
@@ -1766,7 +1848,7 @@ svg {
 }
 .empty-list {
   padding: 20px;
-  color: #a4b4ba;
+  color: var(--text-muted);
   text-align: center;
   font-size: 12px;
 }
@@ -1894,7 +1976,7 @@ svg {
   margin: 24px 0 10px;
 }
 .auth-card > p {
-  color: #95a7ae;
+  color: var(--text-muted);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -1902,7 +1984,7 @@ svg {
   margin-top: 16px;
 }
 .auth-card label span {
-  color: #aab7bd;
+  color: var(--text-muted);
   font-weight: 400;
 }
 .auth-card .auth-contact-hint {
@@ -1918,7 +2000,7 @@ svg {
   gap: 5px;
   padding: 4px;
   margin: 22px 0 18px;
-  background: #f1f6f7;
+  background: #f3f3f5;
   border-radius: 10px;
 }
 .auth-tabs button {
@@ -1927,7 +2009,7 @@ svg {
   background: transparent;
   border-radius: 7px;
   padding: 9px;
-  color: #8199a3;
+  color: var(--text-muted);
   font-size: 12px;
 }
 .auth-tabs button.active {
@@ -1940,14 +2022,14 @@ svg {
   display: flex;
   gap: 18px;
   margin-top: 20px;
-  border-bottom: 1px solid #e7eeee;
+  border-bottom: 1px solid #e8e9ed;
 }
 .login-method button {
   border: 0;
   border-bottom: 2px solid transparent;
   padding: 0 1px 9px;
   background: transparent;
-  color: #8b9fa7;
+  color: var(--text-muted);
   font-size: 12px;
 }
 .login-method button.active {
@@ -1964,14 +2046,14 @@ svg {
 .verification-field input {
   flex: 1;
   min-width: 0;
-  border: 1px solid #e1e9eb;
+  border: 1px solid #e3e4e8;
   border-radius: 8px;
   padding: 10px 12px;
   font-size: 12px;
 }
 .verification-field button {
   flex: none;
-  border: 1px solid #d6e8e7;
+  border: 1px solid #dcdde2;
   border-radius: 8px;
   background: #edf7f5;
   color: #288d92;
@@ -1994,11 +2076,11 @@ svg {
 .password-field {
   display: flex;
   align-items: center;
-  border: 1px solid #e1e9eb;
+  border: 1px solid #e3e4e8;
   border-radius: 9px;
 }
 .password-field:focus-within {
-  border-color: #72c4c4;
+  border-color: var(--ring);
 }
 .password-field input {
   min-width: 0;
@@ -2014,7 +2096,7 @@ svg {
   place-items: center;
   border: 0;
   background: transparent;
-  color: #91a6af;
+  color: var(--text-muted);
   padding: 8px 11px;
 }
 .auth-card .success-text {
@@ -2045,7 +2127,7 @@ svg {
   font-size: 10px;
   line-height: 1.6;
   text-align: center;
-  border-top: 1px solid #edf1f2;
+  border-top: 1px solid #eeeff1;
   padding-top: 20px;
   margin-top: 20px;
 }
@@ -2233,7 +2315,7 @@ svg {
     font-size: 14px;
   }
   .chat-notice {
-    font-size: 9px;
+  font-size: 11px;
   }
   .message-stack {
     max-width: 87%;
@@ -2252,7 +2334,7 @@ svg {
     gap: 12px;
   }
   .stat-card small {
-    font-size: 9px;
+  font-size: 10px;
   }
   .todo-row {
     flex-wrap: wrap;

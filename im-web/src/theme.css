@@ -1,19 +1,24 @@
-/* A warmer, quieter visual layer over the original layout and responsive rules. */
+/* The visual layer over the layout rules in style.css.
+   Every value here comes from the tokens declared in style.css; if a colour
+   needs to change, it changes in one place. */
+
 :root {
-  color: #252943;
-  background: #f7f7fb;
+  color: var(--text-body);
+  background: var(--surface-app);
 }
 
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline-color: #8588ea;
+  outline-color: var(--ring);
 }
 
 .app-shell {
-  background: #f7f7fb;
+  background: var(--surface-app);
 }
+
+/* ---------------------------------------------------------------- rail ---- */
 .rail {
   background: #222747;
   border-right: 1px solid #353b62;
@@ -39,70 +44,78 @@ select:focus-visible {
   box-shadow: 0 0 0 2px #ffffff40;
 }
 
+/* ------------------------------------------------------------- panels ---- */
+/* Three columns, one neutral family: white side panels around a transcript
+   that sits one step deeper. No column competes with the messages. */
 .conversation-panel,
 .assistant-panel {
-  background: #fff;
-  border-color: #e9eaf2;
+  background: var(--surface-panel);
+  border-color: var(--line);
 }
-.panel-top h1,
+.panel-top h1 {
+  color: var(--text-strong);
+  font-size: var(--text-headline);
+  letter-spacing: -0.9px;
+}
 .page-header h1 {
-  color: #252943;
-  letter-spacing: -1.1px;
+  color: var(--text-strong);
+  letter-spacing: -1px;
 }
 .overline {
-  color: #777db0;
-  letter-spacing: 1.55px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 1.2px;
 }
 .count-pill,
 .tag,
 .beta {
-  background: #efefff;
-  color: #5b60b8;
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 .icon-button:hover,
 .tool-button:hover,
 .tool-button.recording {
-  background: #f0efff;
-  color: #5258b6;
+  background: var(--brand-tint);
+  color: var(--brand-strong);
 }
 .icon-button.outlined,
 .outline-button {
-  border-color: #e1e2f0;
-  color: #5259ad;
+  border-color: var(--line);
+  color: var(--brand);
 }
 .search-box {
-  background: #f7f7fb;
-  border-color: #ececf4;
+  background: var(--surface-soft);
+  border-color: var(--line-soft);
   border-radius: 13px;
 }
 .search-box:focus-within,
 .composer:focus-within {
-  border-color: #9396e8;
-  box-shadow: 0 0 0 3px #6c71e51a;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px var(--ring-soft);
 }
 .conversation-item {
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   transition:
     background 0.18s ease,
     transform 0.18s ease;
 }
 .conversation-item:hover {
-  background: #f6f5ff;
+  background: var(--brand-tint);
   transform: translateX(2px);
 }
 .conversation-item.selected {
-  background: #ededff;
-  color: #252943;
+  background: var(--brand-soft);
+  color: var(--text-strong);
 }
 .conversation-line.preview,
 .chat-heading p,
 .page-subtitle {
-  color: #798199;
+  color: var(--text-muted);
 }
 .unread-badge,
 .primary-button,
 .send-button {
-  background: #5c62ca;
+  background: var(--brand);
 }
 .primary-button,
 .send-button {
@@ -110,171 +123,177 @@ select:focus-visible {
 }
 .primary-button:hover,
 .send-button:hover {
-  background: #484eb4;
+  background: var(--brand-strong);
 }
 .sidebar-help {
-  background: #f3f2ff;
-  border: 1px solid #e9e8fa;
+  background: var(--brand-tint);
+  border: 1px solid var(--brand-soft);
 }
 .help-icon,
 .assistant-mark,
 .modal-icon {
-  background: #e8e7ff;
-  color: #535ab5;
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 .sidebar-bottom,
 .chat-header,
 .assistant-header,
 .composer-zone {
-  border-color: #ebeaf3;
+  border-color: var(--line-soft);
 }
 
+/* --------------------------------------------------------- transcript ---- */
 .chat-main {
-  background: #f7f8fc;
+  background: var(--surface-sunken);
 }
 .chat-header,
 .composer-zone {
-  background: #fff;
+  background: var(--surface-panel);
 }
 .chat-notice {
-  background: #f0efff;
-  color: #575d9c;
+  background: var(--brand-tint);
+  color: var(--brand-ink);
 }
 .day-divider span,
 .system-message {
-  background: #eaeaf5;
-  color: #6e7691;
+  background: var(--line);
+  color: var(--text-muted);
 }
 .bubble {
-  border-color: #e9eaf2;
+  border-color: var(--line);
   border-radius: 6px 17px 17px 17px;
   box-shadow: 0 6px 18px #3236570b;
 }
 .mine .bubble {
-  background: #e6e7ff;
-  border-color: #dedffc;
+  background: var(--brand-soft);
+  border-color: #dbdcf9;
   border-radius: 17px 6px 17px 17px;
-  color: #303668;
+  color: var(--brand-ink);
 }
 .translation {
-  background: #f2f3fb;
-  color: #64708c;
+  background: var(--surface-soft);
+  color: var(--text-muted);
 }
 .composer {
-  border-color: #e7e8f1;
+  border-color: var(--line);
   border-radius: 17px;
   box-shadow: 0 5px 22px #2a30500a;
 }
 .composer textarea {
-  color: #252943;
+  color: var(--text-strong);
 }
 .voice-label,
 .voice-interim,
 .load-more,
 .source-link,
 .text-button {
-  color: #555ec0;
+  color: var(--brand);
 }
 .load-more {
-  background: #ececff;
+  background: var(--brand-soft);
 }
+
+/* ------------------------------------------------------------ assistant ---- */
+/* The assistant is an accessory, so its header is quiet: the previous
+   full-width indigo gradient outweighed the conversation next to it. */
 .assist-hero {
-  background: linear-gradient(145deg, #f1efff, #ecf1ff);
-  border-color: #e5e4fa;
-  border-radius: 19px;
+  background: linear-gradient(145deg, var(--brand-tint), #f0f4ff);
+  border-color: var(--brand-soft);
+  border-radius: var(--radius-lg);
 }
 .assist-hero:after {
-  color: #d9d7fb;
+  color: #dcdafb;
 }
 .assist-hero-icon {
-  color: #555dc1;
+  color: var(--brand);
 }
 .assist-hero strong,
 .assist-label,
 .summary-card small,
 .highlight-section button {
-  color: #535ab5;
+  color: var(--brand);
 }
 .assist-label strong {
-  color: #343955;
+  color: var(--text-strong);
 }
 .segmented {
-  background: #f1f1fb;
+  background: var(--surface-soft);
 }
 .summary-card,
 .soft-button {
-  border-color: #e7e7f3;
-  background: #f8f8fe;
+  border-color: var(--line);
+  background: var(--surface-raised);
 }
 .soft-button {
-  color: #525ab5;
+  color: var(--brand);
 }
 .soft-button:hover,
 .outline-button:hover {
-  background: #eeeeff;
+  background: var(--brand-tint);
 }
 .source-link {
-  border-color: #e9e9f2;
+  border-color: var(--line);
 }
 .segmented button.active {
-  color: #5157b9;
+  color: var(--brand-strong);
 }
 
+/* --------------------------------------------------------------- pages ---- */
 .page-shell {
-  background: #f7f7fb;
+  background: var(--surface-app);
 }
 .stat-card,
 .content-card {
-  border-color: #e9eaf2;
-  border-radius: 19px;
+  border-color: var(--line);
+  border-radius: var(--radius-lg);
   box-shadow: 0 10px 28px #3337580a;
 }
 .stat-card strong {
-  color: #555bc4;
+  color: var(--brand);
 }
 .person-row,
 .request-row,
 .todo-row,
 .notice-row {
-  border-color: #edecf4;
+  border-color: var(--line-soft);
 }
 .notice-icon {
-  background: #efefff;
-  color: #555cb9;
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 .add-task,
 .account-contacts > div {
-  background: #f8f8fd;
-  border-color: #e8e9f2;
+  background: var(--surface-raised);
+  border-color: var(--line);
 }
 .add-task button,
 .source-small {
-  color: #555dc1;
+  color: var(--brand);
 }
 .todo-label input:checked + .custom-check {
-  background: #6066cc;
-  border-color: #6066cc;
+  background: var(--brand);
+  border-color: var(--brand);
 }
 .todo-label input:focus-visible + .custom-check {
-  outline-color: #8588ea;
+  outline-color: var(--ring);
 }
 .setting-row,
 .profile-setting,
 .bind-form {
-  border-color: #ececf4;
+  border-color: var(--line-soft);
 }
 .setting-input,
 .setting-row select,
 .bind-form input {
-  border-color: #e3e5ef;
-  color: #343955;
+  border-color: var(--line-strong);
+  color: var(--text-strong);
 }
 .setting-input:focus-visible,
 .setting-row select:focus-visible {
-  outline-color: #8588ea;
+  outline-color: var(--ring);
 }
 .switch input:checked + span {
-  background: #6066cc;
+  background: var(--brand);
 }
 .modal-backdrop,
 .drawer-backdrop {
@@ -283,19 +302,20 @@ select:focus-visible {
 }
 .modal-card,
 .info-drawer {
-  background: #fff;
+  background: var(--surface-panel);
   box-shadow: 0 26px 80px #1a1f4833;
 }
 .modal-card {
-  border-radius: 22px;
+  border-radius: var(--radius-xl);
 }
 .toast {
   background: #292f55;
 }
 
+/* ---------------------------------------------------------------- auth ---- */
 .auth-shell {
   grid-template-columns: minmax(0, 49%) minmax(0, 51%);
-  background: #f7f7fb;
+  background: var(--surface-app);
 }
 .auth-visual {
   isolation: isolate;
@@ -336,7 +356,7 @@ select:focus-visible {
 }
 .art-card {
   border: 1px solid #ffffffb8;
-  border-radius: 19px;
+  border-radius: var(--radius-lg);
   color: #353b66;
   box-shadow: 0 25px 65px #12183d4d;
   padding: 16px 19px;
@@ -350,9 +370,10 @@ select:focus-visible {
 }
 .auth-copy .overline {
   color: #cbcfff;
+  letter-spacing: 1.2px;
 }
 .auth-copy h1 {
-  letter-spacing: -2.5px;
+  letter-spacing: -2.2px;
 }
 .auth-copy > p:last-child,
 .auth-visual > small {
@@ -360,74 +381,75 @@ select:focus-visible {
 }
 .auth-form-wrap {
   background:
-    radial-gradient(circle at 96% 6%, #e9e8ff 0, transparent 29%), #f7f7fb;
+    radial-gradient(circle at 96% 6%, #e9e8ff 0, transparent 29%),
+    var(--surface-app);
   padding: 30px clamp(24px, 5vw, 76px);
 }
 .auth-card {
   width: min(452px, 100%);
-  background: #fff;
-  border: 1px solid #e9e9f3;
+  background: var(--surface-panel);
+  border: 1px solid var(--line);
   border-radius: 25px;
   padding: clamp(24px, 3vw, 36px);
   box-shadow: 0 24px 70px #252a5414;
 }
 .eyebrow-chip {
-  background: #efefff;
-  color: #545bb7;
+  background: var(--brand-soft);
+  color: var(--brand);
   border-radius: 20px;
   font-weight: 700;
 }
 .auth-card h2 {
-  color: #252943;
+  color: var(--text-strong);
   margin-top: 21px;
-  letter-spacing: -1.1px;
+  letter-spacing: -0.9px;
 }
 .auth-card > p {
-  color: #747b93;
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
 .auth-card label,
 .field-label {
-  color: #4b526d;
-  font-size: 12px;
+  color: var(--text-body);
+  font-size: var(--text-sm);
 }
 .auth-card .auth-contact-hint {
-  color: #565f9c;
+  color: var(--brand-ink);
 }
 .auth-card > input,
 .auth-card .input-prefix,
 .auth-card .password-field,
 .verification-field input {
-  border-color: #e3e5ef;
-  border-radius: 11px;
-  background: #fdfdff;
-  color: #252943;
-  font-size: 13px;
+  border-color: var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-strong);
+  font-size: var(--text-base);
 }
 .auth-card input:focus,
 .auth-card .input-prefix:focus-within,
 .auth-card .password-field:focus-within {
-  border-color: #777ddd;
-  box-shadow: 0 0 0 3px #666dda1a;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px var(--ring-soft);
 }
 .auth-tabs,
 .login-method {
   border-radius: 12px;
 }
 .auth-tabs {
-  background: #f2f2fb;
+  background: var(--surface-soft);
 }
 .auth-tabs button.active {
-  color: #4f56b6;
+  color: var(--brand-strong);
   box-shadow: 0 2px 8px #30386c15;
 }
 .login-method button.active {
-  color: #4f56b6;
-  border-bottom-color: #6168cc;
+  color: var(--brand-strong);
+  border-bottom-color: var(--brand);
 }
 .verification-field button {
-  background: #efefff;
-  color: #4b54ad;
+  background: var(--brand-soft);
+  color: var(--brand-ink);
   border-color: #e1e1fa;
 }
 .verification-field button:hover:not(:disabled) {
@@ -435,17 +457,17 @@ select:focus-visible {
 }
 .auth-card .demo-code,
 .bind-form .demo-code {
-  background: #eeefff;
-  color: #414a99;
+  background: var(--brand-tint);
+  color: var(--brand-ink);
 }
 .auth-back,
 .auth-switch {
-  color: #4d55b9;
+  color: var(--brand);
 }
 .auth-card .auth-disclaimer {
-  color: #80869b;
-  border-color: #eeeef5;
-  font-size: 11px;
+  color: var(--text-muted);
+  border-color: var(--line-soft);
+  font-size: var(--text-xs);
 }
 
 @media (max-width: 830px) {
@@ -486,171 +508,324 @@ select:focus-visible {
     transition: none;
   }
 }
+
 /* Keep the login page hidden until the server has checked an existing session. */
 .auth-loading {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  color: #433969;
-  background: #f7f5fb;
+  color: var(--text-body);
+  background: var(--surface-app);
   font-size: 1rem;
 }
 
-/* Chat workspace: give each column a clear job without tinting the content itself. */
+/* ------------------------------------------------------ chat workspace ---- */
+/* Each column keeps a clear job without tinting the content itself. */
 .chat-layout .conversation-panel {
-  background: #fbfaf7;
-  border-right: 1px solid #e8e4df;
+  background: var(--surface-panel);
+  border-right: 1px solid var(--line);
 }
 .chat-layout .panel-top {
-  background: linear-gradient(145deg, #fffdf9, #f4f0ea);
+  background: var(--surface-panel);
 }
 .chat-layout .panel-top h1 {
-  color: #252943;
+  color: var(--text-strong);
 }
 .chat-layout .search-box {
-  background: #fff;
-  border-color: #e8e3dc;
-  box-shadow: 0 3px 12px #4c41530a;
+  background: var(--surface-soft);
+  border-color: var(--line-soft);
+  box-shadow: none;
 }
 .chat-layout .section-label {
-  color: #666a7a;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
 .chat-layout .conversation-item {
   position: relative;
   margin-bottom: 3px;
 }
 .chat-layout .conversation-item:hover {
-  background: #f0efff;
+  background: var(--brand-tint);
 }
 .chat-layout .conversation-item.selected {
-  background: #e6e7ff;
-  box-shadow: inset 3px 0 #5c62ca, 0 5px 14px #32377510;
+  background: var(--brand-soft);
+  box-shadow:
+    inset 3px 0 var(--brand),
+    0 5px 14px #32377510;
   transform: none;
 }
 .chat-layout .conversation-item.selected .conversation-line strong {
-  color: #343a94;
+  color: var(--brand-ink);
 }
 .chat-layout .conversation-line.preview {
-  color: #666e84;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
 .chat-layout .conversation-line small {
-  color: #717a8d;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
 .chat-layout .sidebar-bottom {
-  background: #fbfaf7;
-  border-top-color: #e8e4df;
+  background: var(--surface-panel);
+  border-top-color: var(--line);
 }
 .chat-layout .sidebar-help {
-  background: #fff;
-  border-color: #e8e3f1;
-  box-shadow: 0 6px 18px #3536600b;
+  background: var(--brand-tint);
+  border-color: var(--brand-soft);
+  box-shadow: none;
 }
 
 .chat-layout .chat-main {
-  background: #f3f6fb;
+  background: var(--surface-sunken);
 }
+/* The header and composer already carry a 1px border from style.css; adding a
+   shadow on top of it drew the same line twice. */
 .chat-layout .chat-header {
-  background: #fff;
-  box-shadow: 0 4px 18px #26345809;
+  background: var(--surface-panel);
+  box-shadow: none;
   z-index: 1;
 }
+/* The delivery hint is chrome, not conversation: keeping it on brand tint made
+   a full-width lavender band that read as "a message from me". */
 .chat-layout .chat-notice {
-  background: #e8eefc;
-  color: #3e528d;
-  font-size: 11px;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 .chat-layout .day-divider span {
-  background: #e5eaf3;
-  color: #5b6982;
+  background: var(--line);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
 .chat-layout .message-meta,
 .chat-layout .delivery {
-  color: #64728b;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
 .chat-layout .bubble {
-  background: #fff;
-  border-color: #dfe5f0;
-  box-shadow: 0 6px 18px #27345910;
-  color: #26324c;
+  background: var(--surface-panel);
+  border-color: var(--line);
+  box-shadow: 0 4px 14px #2734590d;
+  color: var(--text-body);
 }
 .chat-layout .mine .bubble {
-  background: #dfe3ff;
-  border-color: #ccd2f8;
-  color: #292f73;
+  background: var(--brand-soft);
+  border-color: #dbdcf9;
+  color: var(--brand-ink);
 }
 .chat-layout .composer-zone {
-  background: #fff;
-  box-shadow: 0 -6px 24px #28335408;
+  background: var(--surface-panel);
+  box-shadow: none;
 }
 .chat-layout .composer {
-  border-color: #dce2ef;
-  box-shadow: 0 8px 22px #2833540d;
+  border-color: var(--line-strong);
+  box-shadow: 0 4px 16px #2833540a;
 }
 .chat-layout .composer textarea::placeholder {
-  color: #748198;
+  color: var(--text-faint);
 }
 
+/* The assistant column is a white panel, and its header is plain text on it:
+   a coloured header made the accessory shout louder than the conversation. */
 .chat-layout .assistant-panel {
-  background: #f6f5fc;
-  border-left: 1px solid #e1e0f0;
-  box-shadow: -8px 0 24px #2930640a;
+  background: var(--surface-panel);
+  border-left: 1px solid var(--line);
+  box-shadow: none;
 }
 .chat-layout .assistant-header {
-  background: linear-gradient(120deg, #343c85, #5b60ba);
-  border-bottom: 0;
-  color: #fff;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-strong);
 }
 .chat-layout .assistant-header p {
-  color: #e5e7ff;
+  color: var(--text-muted);
 }
 .chat-layout .assistant-header .assistant-mark {
-  background: #ffffff27;
-  color: #fff;
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 .chat-layout .assistant-header .beta {
-  background: #ffffff2b;
-  color: #fff;
+  background: var(--brand-tint);
+  color: var(--brand);
 }
 .chat-layout .assistant-header .close-assistant {
-  color: #fff;
+  color: var(--text-muted);
+}
+.chat-layout .assistant-header .close-assistant:hover {
+  background: var(--brand-tint);
+  color: var(--brand-strong);
 }
 .chat-layout .assistant-scroll {
-  background: #f6f5fc;
+  background: var(--surface-panel);
 }
 .chat-layout .assist-hero {
-  background: linear-gradient(135deg, #e3e4ff, #f0eaff);
-  border-color: #d9daf9;
-  box-shadow: 0 10px 24px #5257a718;
+  background: linear-gradient(135deg, var(--brand-tint), #eef2ff);
+  border-color: var(--brand-soft);
+  box-shadow: none;
 }
 .chat-layout .assist-hero:after {
-  color: #c9c5f4;
+  color: #dcdafb;
 }
 .chat-layout .assist-hero small,
 .chat-layout .assist-description,
 .chat-layout .highlight-section p {
-  color: #606a82;
+  color: var(--text-muted);
 }
 .chat-layout .assist-section {
-  border-bottom-color: #e4e2f0;
+  border-bottom-color: var(--line-soft);
 }
 .chat-layout .assist-label strong {
-  color: #292f59;
+  color: var(--text-strong);
 }
 .chat-layout .soft-button {
-  background: #e8e9fc;
-  border-color: #d9dbf6;
-  color: #4048a3;
+  background: var(--brand-tint);
+  border-color: var(--brand-soft);
+  color: var(--brand-strong);
 }
 .chat-layout .soft-button:hover:not(:disabled) {
-  background: #d9dcfa;
+  background: var(--brand-soft);
 }
 .chat-layout .summary-card {
-  background: #fff;
-  border-color: #e0e2f1;
+  background: var(--surface-raised);
+  border-color: var(--line);
 }
 .chat-layout .assistant-footer {
-  background: #eeedf8;
-  border-top-color: #deddf0;
-  color: #5e6780;
+  background: var(--surface-raised);
+  border-top-color: var(--line);
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------- legacy small print ---- */
+/* style.css still carries its original teal-grey tints on a handful of labels
+   and hairlines that the blocks above do not reach. Each one is pinned to the
+   type scale here, so no 10px grey survives and nothing stays teal. */
+.conversation-item {
+  color: var(--text-body);
+}
+.sidebar-help p {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.composer-tip {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+.caption-button {
+  color: var(--brand);
+}
+.message-meta span {
+  color: var(--text-body);
+}
+.day-divider {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.history-result {
+  border-bottom-color: var(--line-soft);
+}
+.history-result time {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.history-empty {
+  color: var(--text-muted);
+}
+.translation-preview {
+  border-color: var(--line);
+  background: var(--surface-soft);
+  color: var(--text-body);
+  border-radius: var(--radius-sm);
+}
+.translation-preview textarea,
+.translation-preview-actions button {
+  border-color: var(--line-strong);
+}
+.translation-preview-actions button {
+  color: var(--brand);
+}
+.summary-evidence-row {
+  border-top-color: var(--line-soft);
+}
+.summary-evidence-row small {
+  color: var(--text-muted);
+}
+
+/* Teal accents that the blocks above never reached. The unread divider is the
+   most visible of them: it sits mid-transcript and was the only green left. */
+.unread-divider {
+  color: var(--brand);
+  font-size: var(--text-xs);
+}
+.unread-divider:before,
+.unread-divider:after {
+  background: var(--brand-soft);
+}
+.mention-picker button {
+  border-color: var(--brand-soft);
+  background: var(--brand-tint);
+  color: var(--brand);
+}
+.voice-interim button {
+  border-color: var(--line-strong);
+  color: var(--brand);
+}
+.task-edit-panel button {
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+.notice-row.unread .notice-body strong {
+  color: var(--accent-ink);
+}
+.invite-person input {
+  accent-color: var(--brand);
+}
+.content-card > .success-text,
+.auth-card .success-text {
+  color: var(--success);
+}
+.presence.online {
+  background: var(--success);
+}
+
+/* The old error red sat at 3.6:1 on white; an error message has to be readable. */
+.error-text {
+  color: var(--danger) !important;
+}
+
+/* Below 1250px the assistant panel becomes a drawer over the transcript, so it
+   needs the shadow the flat in-flow panel deliberately does without. */
+@media (max-width: 1250px) {
+  .chat-layout .assistant-panel {
+    box-shadow: -16px 0 46px #23283824;
+  }
+}
+
+
+/* ----------------------------------------------------------- scrollbars ---- */
+/* Everything else is themed, so the OS default was the one piece of chrome
+   still drawing 15px grey rails with stepper arrows into the transcript. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c2c6d4;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
