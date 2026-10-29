@@ -502,8 +502,9 @@ It rechecks membership, join cursor
 and live source visibility **after** inference. The response is not stored and
 uses `Cache-Control: no-store`.
 
-LangChain4j embeds the permitted messages and question using local Ollama
-`bge-m3` (1024 dimensions). PostgreSQL with pgvector persists each eligible
+LangChain4j embeds the permitted messages and question using a local Ollama
+embedding model with 1024 dimensions (`qwen3-embedding:0.6b` for the development
+stack, `bge-m3` for the release stack). PostgreSQL with pgvector persists each eligible
 message's embedding and SHA-256 content hash, keyed by group, message and model;
 it stores no group message text. A later question reuses unchanged embeddings.
 The query filters rows to the caller's authorized message IDs, then pgvector
@@ -529,27 +530,32 @@ AI Kafka queue, autonomous task creation or cross-request chat memory. This
 remains a small-group RAG workflow rather than an enterprise knowledge base.
 Group text stays on local Ollama.
 
-To enable the feature, download a local embedding model in addition to the
-chat model, then stop and restart chat-service. With `local_stack.ps1`, set
-the variables in the **same PowerShell session** before `start -Build`:
+To enable the feature, make sure the local embedding model is installed
+alongside the chat model, then stop and restart chat-service.
+`im.agent.embedding-model` defaults to `qwen3-embedding:0.6b`, and
+`local_stack.ps1 start` preloads both models (a 30-minute keep-alive) after
+infrastructure is ready, so the first question does not pay the load cost.
+Override the model in the **same PowerShell session** before `start -Build`:
 
 ```powershell
-ollama pull bge-m3
+ollama pull qwen3-embedding:0.6b
 Set-Location D:\im-assistant\im-backend
 # Add IM_PGVECTOR_PASSWORD to .env if upgrading an existing checkout.
 .\tools\local_stack.ps1 stop
 $env:IM_SUMMARY_MODEL = 'qwen3:4b'
 $env:IM_AGENT_MODEL = 'qwen3:4b'
+# Optional: use bge-m3 (also 1024 dimensions) instead of the default model.
 $env:IM_AGENT_EMBED_MODEL = 'bge-m3'
 .\tools\local_stack.ps1 start -Build
 ```
 
-For a manually started chat-service, set the same variables in each chat node's
-PowerShell window **before** starting it. If the embedding model or chat model
-is missing, the Agent endpoint returns 503; normal messaging still works.
-`IM_AGENT_MODEL` defaults to `IM_SUMMARY_MODEL` and then `qwen3:4b`;
-`IM_AGENT_EMBED_MODEL` must still name the locally installed `bge-m3` model
-or another embedding model with exactly 1024 dimensions. PostgreSQL must be
+For a manually started chat-service, start it after the embedding model is
+pulled; it picks up the same default without extra variables. If the embedding
+model or chat model is missing, the Agent endpoint returns 503; normal messaging
+still works. `IM_AGENT_MODEL` defaults to `IM_SUMMARY_MODEL` and then `qwen3:4b`;
+`IM_AGENT_EMBED_MODEL` must name a locally installed embedding model with
+exactly 1024 dimensions, and stored vectors are keyed by model name so switching
+models re-embeds the visible messages instead of mixing vectors. PostgreSQL must be
 running; the Agent endpoint returns 503 if it cannot connect. Normal messaging
 and summaries continue to use MySQL and do not need the vector index.
 Ask from a real discussion room in the right panel. Task suggestions are only

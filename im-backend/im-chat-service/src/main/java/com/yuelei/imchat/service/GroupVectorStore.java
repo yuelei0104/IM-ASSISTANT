@@ -144,7 +144,7 @@ public class GroupVectorStore {
     }
 
     public static String vector(float[] values) {
-        if (values.length != 1024) throw new IllegalArgumentException("向量维度必须为 1024（bge-m3）");
+        if (values.length != 1024) throw new IllegalArgumentException("向量维度必须为 1024");
         var result = new StringBuilder(8192).append('[');
         for (int i = 0; i < values.length; i++) {
             if (!Float.isFinite(values[i])) throw new IllegalArgumentException("向量包含无效数值");

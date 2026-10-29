@@ -95,6 +95,21 @@ function Wait-Web([int]$port, $entry) {
     throw "web health timed out; inspect $stateDirectory\web.err.log"
 }
 
+function Remove-DuplicateEnvironmentVariables {
+    # Windows PowerShell 5.1 copies the process environment into a case-sensitive
+    # dictionary inside Start-Process. A desktop host that exports both
+    # HTTPS_PROXY and https_proxy therefore makes every launch fail with
+    # "Item has already been added". Only this session is touched, and only when
+    # such a duplicate actually exists.
+    $variables = [Environment]::GetEnvironmentVariables('Process')
+    $duplicates = $variables.Keys | Group-Object { $_.ToUpperInvariant() } | Where-Object { $_.Count -gt 1 }
+    foreach ($group in $duplicates) {
+        # SetEnvironmentVariable is case-insensitive, so this drops both spellings.
+        [Environment]::SetEnvironmentVariable($group.Name, $null, 'Process')
+        Write-Host "Dropped duplicate environment variable $($group.Name) before launching processes"
+    }
+}
+
 function Read-StackPassword([string]$name) {
     $envFile = Join-Path $backend '.env'
     if (-not (Test-Path $envFile)) { throw "Create $envFile from .env.example first" }
@@ -134,6 +149,34 @@ function Wait-Infrastructure([int]$timeoutSeconds = 150) {
         Start-Sleep -Seconds 3
     }
     throw "Infrastructure not ready: mysql=$mysqlReady redis=$redisReady pgvector=$vectorReady kafka=$kafkaReady; run docker compose --profile kafka ps --all and logs"
+}
+
+function Warm-Models([string]$chatModel, [string]$embeddingModel, [int]$port, [string]$keepAlive = '30m') {
+    # Ollama keeps a loaded model in memory for five minutes by default, so a cold
+    # first question pays the load cost inside the Agent request timeout. Loading
+    # both models here makes the first Agent answer as fast as the rest.
+    $endpoints = @(
+        [pscustomobject]@{ Label = 'embedding'; Model = $embeddingModel; Uri = "/api/embed"
+            Body = @{ model = $embeddingModel; input = '预热'; keep_alive = $keepAlive } },
+        [pscustomobject]@{ Label = 'chat'; Model = $chatModel; Uri = "/api/generate"
+            Body = @{ model = $chatModel; prompt = ''; keep_alive = $keepAlive } }
+    )
+    foreach ($endpoint in $endpoints) {
+        if ([string]::IsNullOrWhiteSpace($endpoint.Model)) {
+            Write-Host "WARN: no $($endpoint.Label) model name configured; skipping preload"
+            continue
+        }
+        try {
+            $json = $endpoint.Body | ConvertTo-Json -Compress
+            $null = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$port$($endpoint.Uri)" `
+                -ContentType 'application/json' -Body $json -TimeoutSec 180
+            Write-Host "$($endpoint.Label) model $($endpoint.Model) loaded (keep-alive $keepAlive)"
+        } catch {
+            # A missing model only breaks summaries and Agent answers; chat, unread
+            # counts and notifications keep working, so startup must not fail here.
+            Write-Host "WARN: could not preload $($endpoint.Label) model $($endpoint.Model); run 'ollama pull $($endpoint.Model)'"
+        }
+    }
 }
 
 function Launch([string]$service, [string]$executable, [string[]]$arguments,
@@ -226,6 +269,18 @@ switch ($Action) {
         $env:IM_KAFKA_ENABLED = 'true'
         $env:IM_KAFKA_BOOTSTRAP = '127.0.0.1:19092'
         $env:VITE_IM_GATEWAY_URL = 'http://127.0.0.1:8080'
+        Remove-DuplicateEnvironmentVariables
+        # Without an embedding model the Agent endpoint answers 503 before it
+        # reaches Ollama. Default to the model the development stack installs so
+        # a plain 'start' has working summaries and Agent answers.
+        if ([string]::IsNullOrWhiteSpace($env:IM_AGENT_EMBED_MODEL)) {
+            $env:IM_AGENT_EMBED_MODEL = 'qwen3-embedding:0.6b'
+        }
+        $ollamaPort = 11434
+        if (-not [string]::IsNullOrWhiteSpace($env:IM_OLLAMA_PORT)) { $ollamaPort = [int]$env:IM_OLLAMA_PORT }
+        $chatModel = 'qwen3:4b'
+        if (-not [string]::IsNullOrWhiteSpace($env:IM_SUMMARY_MODEL)) { $chatModel = $env:IM_SUMMARY_MODEL }
+        if (-not [string]::IsNullOrWhiteSpace($env:IM_AGENT_MODEL)) { $chatModel = $env:IM_AGENT_MODEL }
         if ($Build) {
             Push-Location $backend
             try { & (Join-Path $backend 'mvnw.cmd') -pl im-user-service,im-chat-service,im-gateway -am package
@@ -257,12 +312,16 @@ switch ($Action) {
             & docker compose --profile kafka exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --create --if-not-exists --topic im.chat.notifications.v1 --partitions 6 --replication-factor 1
             if ($LASTEXITCODE -ne 0) { throw 'Kafka topic creation failed' }
         } finally { Pop-Location }
+        Warm-Models -chatModel $chatModel -embeddingModel $env:IM_AGENT_EMBED_MODEL -port $ollamaPort
         New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
         $state = [pscustomobject]@{ WebPort = $WebPort; Processes = @() }
         Save-State $state
         try {
             $jar = $jars.user
-            $entry = Launch 'user' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev') $backend $jar $state
+            # Command-line ports beat environment variables: a host that exports
+            # SERVER__PORT would otherwise move the service off the port that
+            # Wait-Health checks.
+            $entry = Launch 'user' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8081') $backend $jar $state
             Wait-Health 'user' 8081 $entry
             $jar = $jars['chat-a']
             $entry = Launch 'chat-a' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8082') $backend $jar $state
@@ -270,7 +329,7 @@ switch ($Action) {
             $entry = Launch 'chat-b' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8083') $backend $jar $state
             Wait-Health 'chat-b' 8083 $entry
             $jar = $jars.gateway
-            $entry = Launch 'gateway' $java @('-jar', "`"$jar`"", '--spring.profiles.active=cluster') $backend $jar $state
+            $entry = Launch 'gateway' $java @('-jar', "`"$jar`"", '--spring.profiles.active=cluster', '--server.port=8080') $backend $jar $state
             Wait-Health 'gateway' 8080 $entry
             # Docker Desktop or another application can acquire the web port
             # while infrastructure and Java services are starting. Choose it
@@ -296,7 +355,9 @@ switch ($Action) {
         } catch {
             Write-Host "Startup failed: $($_.Exception.Message)"
             Stop-Owned $state
-            Remove-Item $stateFile -ErrorAction SilentlyContinue
+            # Remove-Item can be intercepted by host-provided file guards; the .NET
+            # delete keeps this cleanup from hiding the original startup error.
+            try { [System.IO.File]::Delete($stateFile) } catch { }
             throw
         }
         try { Smoke $WebPort } catch {
