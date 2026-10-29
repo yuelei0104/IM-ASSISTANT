@@ -51,10 +51,12 @@ async function request<T>(
   path: string,
   body?: object,
   token?: string,
+  options: { expireOn401?: boolean } = {},
 ): Promise<T> {
   return requestJson<T>(`${apiBase}/auth${path}`, {
     method: body === undefined ? "GET" : "POST", body, token: token ?? null,
     requireAuth: false,
+    expireOn401: options.expireOn401,
     fallback: () => "操作失败，请稍后重试",
   });
 }
@@ -161,6 +163,8 @@ export async function bindContact(
       "/bind",
       { contactType, contact, password, code },
       requireSession(),
+      // A wrong password also answers 401; that must not end the current session.
+      { expireOn401: false },
     ),
   );
 }

@@ -15,6 +15,8 @@ type Options = {
   requireAuth?: boolean;
   timeoutMs?: number;
   emptyStatuses?: number[];
+  /** A 401 here means bad credentials, not a dead session; keep the session. */
+  expireOn401?: boolean;
   fallback?: (status: number) => string;
 };
 
@@ -41,7 +43,7 @@ export async function requestJson<T>(path: string, options: Options = {}): Promi
   } finally {
     clearTimeout(timer);
   }
-  if (response.status === 401 && token) expireIfCurrent(token);
+  if (response.status === 401 && token && options.expireOn401 !== false) expireIfCurrent(token);
   if (response.status === 204 || options.emptyStatuses?.includes(response.status))
     return undefined as T;
   let payload: unknown;

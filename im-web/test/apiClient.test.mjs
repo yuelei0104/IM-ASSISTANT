@@ -49,3 +49,22 @@ test("a stalled request reports a timeout and aborts its fetch", async () => {
   await assert.rejects(requestJson("/api/chats/groups", { timeoutMs: 5 }), /请求超时/);
   assert.equal(aborted, true);
 });
+
+test("a credential 401 can opt out of the global logout", async () => {
+  const values = new Map([[sessionKey, "valid-token"]]);
+  globalThis.sessionStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    removeItem: (key) => values.delete(key),
+  };
+  let expired = 0;
+  const unsubscribe = onSessionExpired(() => expired++);
+  globalThis.fetch = async () => Response.json({ message: "密码不正确" }, { status: 401 });
+  try {
+    await assert.rejects(
+      requestJson("/api/auth/bind", { method: "POST", body: {}, expireOn401: false }),
+      /密码不正确/,
+    );
+    assert.equal(values.get(sessionKey), "valid-token");
+    assert.equal(expired, 0);
+  } finally { unsubscribe(); }
+});
