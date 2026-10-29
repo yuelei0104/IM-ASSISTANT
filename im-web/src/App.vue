@@ -23,20 +23,12 @@ import AppModals from "./components/AppModals.vue";
 import ChatInfoDrawer from "./components/ChatInfoDrawer.vue";
 import {
   accountStateKey,
-  clearSession,
-  currentUser,
-  logout,
-  sessionToken,
-  ApiError,
   type Account,
 } from "./authApi";
 import type { ContactType } from "./authValidation";
 import { friendProfile, type ContactProfile } from "./contactApi";
 import type { DirectMessage, MessageRecall } from "./chatApi";
-import {
-  createGroupChat, dissolveGroup, getGroup, getGroupMessage, inviteGroupMembers,
-  leaveGroup, removeGroupMember, transferGroupOwner, type GroupMessage,
-} from "./groupApi";
+import { getGroup, getGroupMessage, type GroupMessage } from "./groupApi";
 import { useGroupAgent } from "./useGroupAgent";
 import { useGroupSummaries } from "./useGroupSummaries";
 import { useTasks } from "./useTasks";
@@ -50,53 +42,20 @@ import { useChatSend } from "./useChatSend";
 import { useVoiceInput } from "./useVoiceInput";
 import { useGroupTranslation } from "./useGroupTranslation";
 import { useRealtime } from "./useRealtime";
+import { useAccountSession, peerCacheKey, type ShellPage } from "./useAccountSession";
+import { useConversationView } from "./useConversationView";
+import { useGroupAdmin } from "./useGroupAdmin";
 import { directPeer, serverGroupId } from "./chatIds";
 import { onSessionExpired } from "./session";
 import type { MentionNotice } from "./noticeApi";
-import { chinaMessageTime } from "./chinaTime";
-import {
-  initialState,
-  selfId,
-  type Conversation,
-  type DemoState,
-  type Message,
-  type Person,
-} from "./demo";
+import { initialState, type DemoState, type Message, type Person } from "./demo";
 
-type Page = "chat" | "contacts" | "requests" | "notices" | "tasks" | "settings";
+type Page = ShellPage;
 type Modal = "group" | "invite" | "friend" | null;
 
-function load(account: Account | null): DemoState {
-  if (!account) return initialState();
-  try {
-    const saved = localStorage.getItem(accountStateKey(account.id));
-    if (saved) {
-      const v = JSON.parse(saved);
-      if (v.people && v.conversations && v.preferences) {
-        // Legacy demo tasks are deliberately not imported as real server tasks.
-        v.todos = [];
-        return v;
-      }
-    }
-  } catch {}
-  return initialState();
-}
-function peerCacheKey(id: number): string { return `${accountStateKey(id)}-chat-peers`; }
-function loadKnownPeers(account: Account): ContactProfile[] {
-  try {
-    const saved = JSON.parse(localStorage.getItem(peerCacheKey(account.id)) || "[]");
-    if (!Array.isArray(saved)) return [];
-    return saved.filter((p) =>
-      Number.isSafeInteger(p.id) && p.id > 0 &&
-      typeof p.nickname === "string" && typeof p.handle === "string",
-    );
-  } catch { return []; }
-}
-
 const currentAccount = ref<Account | null>(null);
-const data = ref<DemoState>(load(currentAccount.value));
+const data = ref<DemoState>(initialState());
 const loggedIn = computed(() => currentAccount.value !== null);
-const authRestoring = ref(Boolean(sessionToken()));
 const missingContact = computed<ContactType | null>(() =>
   !currentAccount.value?.phone
     ? "phone"
@@ -112,7 +71,6 @@ const auth = useAuthForm({
     currentAccount.value = account;
   },
 });
-const authError = auth.error;
 
 const page = ref<Page>("chat");
 const activeId = ref("");
@@ -417,110 +375,46 @@ const nav: { id: Page; label: string; icon: string }[] = [
   { id: "settings", label: "设置", icon: "settings" },
 ];
 
-const realGroups = computed<Conversation[]>(() =>
-  serverGroups.value.map((g) => ({
-    id: `server-group-${g.id}`, name: g.name, kind: "group",
-    memberIds: g.memberIds.map((id) => id === currentAccount.value?.id ? selfId : `user-${id}`),
-    ownerId: g.ownerId === currentAccount.value?.id ? selfId : `user-${g.ownerId}`,
-    unread: g.unreadCount, color: "teal", initials: g.name[0] || "群",
-  })),
-);
-const realConversations = computed<Conversation[]>(() =>
-  knownPeers.value.filter((p) => !hiddenPeers.value.includes(p.id)
-    || activeId.value === `server-user-${p.id}`).map((p) => ({
-    id: `server-user-${p.id}`,
-    name: p.nickname,
-    kind: "direct",
-    memberIds: [selfId, `user-${p.id}`],
-    unread: directUnread.value[p.id] ?? 0,
-    color: "violet",
-    initials: p.nickname[0] || "友",
-  })),
-);
-const allConversations = computed(() => [...realGroups.value, ...realConversations.value]);
-const active = computed(() => allConversations.value.find((c) => c.id === activeId.value));
-const isDirectChat = computed(() => Boolean(directPeer(activeId.value)));
-const isGroupChat = computed(() => Boolean(serverGroupId(activeId.value)));
-/** Group members the composer can @-mention; "me" is filtered out by the view. */
-const mentionIds = computed(() => (active.value?.memberIds ?? []).filter((id) => id !== "me"));
-
-function renderMessage(m: DirectMessage | GroupMessage): Message {
-  return {
-    id: `${"groupId" in m ? "group" : "server"}-message-${m.id}`,
-    conversationId: activeId.value,
-    senderId: m.senderId === currentAccount.value?.id ? selfId : `user-${m.senderId}`,
-    text: m.recalledAt ? "消息已撤回" : m.body,
-    time: chinaMessageTime(m.createdAt),
-    kind: !m.recalledAt && "groupId" in m && m.kind === "CAPTION" ? "voice" : "text",
-    recalled: !!m.recalledAt,
-    createdAt: m.createdAt,
-    readReceipt: !("groupId" in m) && m.senderId === currentAccount.value?.id && !m.recalledAt
-      ? m.id <= peerLastReadId.value ? "对方已读" : "已发送" : undefined,
-  };
-}
-const messages = computed<Message[]>(() => directPeer(activeId.value)
-  ? directMessages.value.map(renderMessage)
-  : serverGroupId(activeId.value) ? groupMessages.value.map(renderMessage) : []);
-const visibleMessages = computed(() => contextActive.value
-  ? contextMessages.value.map(renderMessage) : messages.value);
-const conversations = computed(() => allConversations.value.filter((c) =>
-  c.name.toLowerCase().includes(search.value.toLowerCase()),
-));
-const friends = computed<Person[]>(() =>
-  contactProfiles.value.map((p) => ({
-    id: `user-${p.id}`,
-    name: p.nickname,
-    handle: p.handle,
-    initials: p.nickname[0] || "友",
-    color: "violet",
-    status: "offline",
-    note: "已建立好友关系",
-  })),
-);
-const received = computed(() =>
-  contactRequests.value.filter((r) => r.toId === currentAccount.value?.id),
-);
-const sent = computed(() =>
-  contactRequests.value.filter((r) => r.fromId === currentAccount.value?.id),
-);
-const unread = computed(() => noticeUnreadCount.value);
-const canWrite = computed(
-  () =>
-    !!active.value &&
-    (directPeer(activeId.value)
-      ? contactProfiles.value.some((p) => p.id === directPeer(activeId.value))
-      : active.value.kind === "group"
-      ? active.value.memberIds.includes(selfId)
-      : active.value.memberIds.every(
-          (id) => id === selfId || data.value.friendIds.includes(id),
-        )),
-);
-const candidates = computed(() =>
-  friends.value.filter((p) => !active.value?.memberIds.includes(p.id)),
-);
-const focusCount = computed(
-  () =>
-    messages.value.filter(
-      (m) =>
-        m.senderId !== selfId && !m.recalled &&
-        data.value.preferences.focusWords
-          .split(/[,，]/)
-          .some((w) => w.trim() && m.text.includes(w.trim())),
-    ).length,
-);
-const summarySources = computed(() =>
-  (range.value === "recent" ? messages.value.slice(-5) : messages.value)
-    .filter((m) => m.kind !== "system" && !m.recalled && m.senderId !== selfId)
-    .slice(-3),
-);
-/** Same clues, resolved to display text so AssistantPanel never needs `person()`. */
-const summarySourcesView = computed(() =>
-  summarySources.value.map((m) => ({
-    id: m.id,
-    conversationId: m.conversationId,
-    label: `${person(m.senderId).name}：${m.text.length > 38 ? `${m.text.slice(0, 38)}…` : m.text}`,
-  })),
-);
+const view = useConversationView({
+  accountId: () => currentAccount.value?.id ?? null,
+  activeId: () => activeId.value,
+  search,
+  range,
+  serverGroups,
+  directMessages,
+  groupMessages,
+  peerLastReadId,
+  directUnread,
+  hiddenPeers,
+  knownPeers,
+  contactProfiles,
+  contactRequests,
+  contextActive,
+  contextMessages,
+  noticeUnread: noticeUnreadCount,
+  people: () => data.value.people,
+  friendIds: () => data.value.friendIds,
+  focusWords: () => data.value.preferences.focusWords,
+});
+const realGroups = view.realGroups;
+const allConversations = view.allConversations;
+const active = view.active;
+const isDirectChat = view.isDirectChat;
+const isGroupChat = view.isGroupChat;
+const mentionIds = view.mentionIds;
+const person = view.person;
+const renderMessage = view.renderMessage;
+const messages = view.messages;
+const visibleMessages = view.visibleMessages;
+const conversations = view.conversations;
+const friends = view.friends;
+const received = view.received;
+const sent = view.sent;
+const unread = view.unread;
+const canWrite = view.canWrite;
+const candidates = view.candidates;
+const focusCount = view.focusCount;
+const summarySourcesView = view.summarySourcesView;
 
 watch(
   data,
@@ -571,15 +465,6 @@ watch(page, () => {
 });
 watch(canWrite, (allowed) => { if (!allowed) stopVoice(); });
 
-function person(id: string): Person {
-  return (
-    friends.value.find((p) => p.id === id) ||
-    data.value.people.find((p) => p.id === id) ||
-    (id === selfId ? data.value.people[0] : undefined) ||
-    { id, name: `用户 ${id.replace(/^user-/, "")}`, handle: "",
-      initials: "友", color: "violet", status: "offline", note: "" }
-  );
-}
 function scrollBottom() {
   if (!contextActive.value && messageScroll.value)
     messageScroll.value.scrollTop = messageScroll.value.scrollHeight;
@@ -641,113 +526,26 @@ function toggleInvite(id: string) {
     ? inviteIds.value.filter((x) => x !== id)
     : [...inviteIds.value, id];
 }
-async function createGroup() {
-  const name = groupName.value.trim();
-  if (!name || inviteIds.value.length > 20 || groupBusy.value) return;
-  groupBusy.value = true;
-  try {
-    const created = await createGroupChat(name, inviteIds.value.map((id) => Number(id.slice(5))));
-    serverGroups.value = [created, ...serverGroups.value];
-    modal.value = null;
-    openChat(`server-group-${created.id}`);
-  } catch (error) {
-    friendError.value = error instanceof Error ? error.message : "建群失败";
-  } finally {
-    groupBusy.value = false;
-  }
-}
-async function addMembers() {
-  const groupId = serverGroupId(activeId.value);
-  if (
-    !active.value ||
-    !groupId ||
-    active.value.ownerId !== selfId ||
-    !inviteIds.value.length ||
-    inviteIds.value.length > 20 ||
-    active.value.memberIds.length + inviteIds.value.length > 50
-  ) {
-    notify("最多 50 人，每次邀请不超过 20 人");
-    return;
-  }
-  if (groupBusy.value) return;
-  groupBusy.value = true;
-  try {
-    const updated = await inviteGroupMembers(groupId, inviteIds.value.map((id) => Number(id.slice(5))));
-    serverGroups.value = serverGroups.value.map((g) => g.id === groupId ? updated : g);
-    modal.value = null;
-    notify("邀请已发送，新成员可以查看加入后的消息");
-  } catch (error) {
-    friendError.value = error instanceof Error ? error.message : "邀请失败";
-  } finally {
-    groupBusy.value = false;
-  }
-}
-async function leaveActiveGroup() {
-  const groupId = serverGroupId(activeId.value);
-  if (!groupId || active.value?.ownerId === selfId || groupBusy.value ||
-      !window.confirm("确定退出讨论室？退出后无法查看原群的消息、点名通知和摘要。")) return;
-  groupBusy.value = true;
-  try {
-    await leaveGroup(groupId);
-    feed.forgetGroup(groupId);
-    notify("已退出讨论室");
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "退出失败");
-  } finally {
-    groupBusy.value = false;
-  }
-}
-async function removeActiveGroupMember(id: string) {
-  const groupId = serverGroupId(activeId.value);
-  const memberId = Number(id.slice(5));
-  if (!groupId || active.value?.ownerId !== selfId || !Number.isSafeInteger(memberId) ||
-      memberId <= 0 || groupBusy.value ||
-      !window.confirm(`确定将 ${person(id).name} 移出讨论室？对方将无法继续查看群内容。`)) return;
-  groupBusy.value = true;
-  try {
-    await removeGroupMember(groupId, memberId);
-    serverGroups.value = serverGroups.value.map((group) => group.id === groupId
-      ? { ...group, memberIds: group.memberIds.filter((member) => member !== memberId) }
-      : group);
-    notify("成员已移出讨论室");
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "移除失败");
-  } finally {
-    groupBusy.value = false;
-  }
-}
-async function transferActiveGroupOwner(id: string) {
-  const groupId = serverGroupId(activeId.value);
-  const memberId = Number(id.slice(5));
-  if (!groupId || active.value?.ownerId !== selfId || !Number.isSafeInteger(memberId) ||
-      memberId <= 0 || groupBusy.value ||
-      !window.confirm(`确定将讨论室群主转让给 ${person(id).name}？转让后你仍是群成员。`)) return;
-  groupBusy.value = true;
-  try {
-    const updated = await transferGroupOwner(groupId, memberId);
-    serverGroups.value = serverGroups.value.map((group) => group.id === groupId ? updated : group);
-    notify("群主已转让，你现在可以退出讨论室");
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "转让失败");
-  } finally {
-    groupBusy.value = false;
-  }
-}
-async function dissolveActiveGroup() {
-  const groupId = serverGroupId(activeId.value);
-  if (!groupId || active.value?.ownerId !== selfId || groupBusy.value ||
-      !window.confirm(`确定解散「${active.value.name}」？所有成员将失去访问权限，群消息和摘要会被永久删除。`)) return;
-  groupBusy.value = true;
-  try {
-    await dissolveGroup(groupId);
-    feed.forgetGroup(groupId);
-    notify("讨论室已解散");
-  } catch (error) {
-    notify(error instanceof Error ? error.message : "解散失败");
-  } finally {
-    groupBusy.value = false;
-  }
-}
+const groupAdmin = useGroupAdmin({
+  activeId: () => activeId.value,
+  active: () => active.value,
+  serverGroups,
+  inviteIds,
+  groupName,
+  busy: groupBusy,
+  error: friendError,
+  notify,
+  openChat,
+  closeModal: () => (modal.value = null),
+  forgetGroup: (groupId) => feed.forgetGroup(groupId),
+  nameOf: (personId) => person(personId).name,
+});
+const createGroup = groupAdmin.create;
+const addMembers = groupAdmin.addMembers;
+const leaveActiveGroup = groupAdmin.leave;
+const removeActiveGroupMember = groupAdmin.removeMember;
+const transferActiveGroupOwner = groupAdmin.transferOwner;
+const dissolveActiveGroup = groupAdmin.dissolve;
 /** Open a notice's message in its discussion room. The list state lives in useNotices. */
 async function openNotice(n: MentionNotice) {
   try {
@@ -786,93 +584,40 @@ async function revealTaskSource(groupId: number, messageId: number) {
   await nextTick();
   await openMessageContext(target);
 }
-function reset() {
-  if (!confirm("重置本地演示数据和偏好？服务端待办不会删除。")) return;
-  data.value = initialState();
-  activeId.value = allConversations.value[0]?.id || "";
-  notify("本地演示数据已重置，服务端待办和聊天记录不受影响");
-}
-
-function applyAccount(account: Account) {
-  agent.reset();
-  clearTranslationPreview();
-  stopVoice();
-  realtime.stop();
-  feed.reset();
-  outbox.clearPending();
-  contacts.reset();
-  summaries.reset();
-  tasks.reset();
-  notices.reset();
-  mentionSelections.value = {};
-  knownPeers.value = loadKnownPeers(account);
-  activeId.value = "";
-  data.value = load(account);
-  data.value.preferences.focusWords = "";
-  data.value.displayName = account.name;
-  data.value.handle = account.handle;
-  data.value.people[0]!.name = account.name;
-  data.value.people[0]!.handle = account.handle;
-  data.value.people[0]!.initials = account.name[0]!;
-  currentAccount.value = account;
-  page.value = "chat";
-  void refreshContacts();
-  feed.refreshAll();
-  void refreshNotices();
-  void loadFocusWords();
-  void refreshTasks();
-  realtime.start();
-  nextTick(scrollBottom);
-}
-async function signOut() {
-  try {
-    await logout();
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 401) clearSession();
-    else {
-      notify(error instanceof Error ? error.message : "退出失败，请稍后重试");
-      return;
-    }
-  }
-  resetClientState();
-}
-function resetClientState() {
-  agent.reset();
-  stopVoice();
-  clearTranslationPreview();
-  closeHistorySearch();
-  closeMessageContext(false);
-  realtime.stop();
-  contacts.reset();
-  outbox.clearPending();
-  feed.reset();
-  summaries.reset();
-  tasks.reset();
-  notices.reset();
-  knownPeers.value = [];
-  mentionSelections.value = {};
-  currentAccount.value = null;
-  page.value = "chat";
-  auth.reset();
-}
-
-const stopSessionEvents = onSessionExpired(() => {
-  if (currentAccount.value) resetClientState();
-  authRestoring.value = false;
-  authError.value = "登录已过期，请重新登录";
+const session = useAccountSession({
+  account: currentAccount,
+  data,
+  knownPeers,
+  activeId,
+  page,
+  mentionSelections,
+  auth,
+  modules: {
+    agent,
+    translation,
+    voice,
+    realtime,
+    feed,
+    outbox,
+    contacts,
+    summaries,
+    tasks,
+    notices,
+    historySearch: history,
+    messageContext: context,
+  },
+  loadFocusWords,
+  firstConversationId: () => allConversations.value[0]?.id || "",
+  scrollBottom,
+  notify,
 });
-onMounted(async () => {
-  if (!sessionToken()) return;
-  try {
-    applyAccount(await currentUser());
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 401) clearSession();
-    authError.value =
-      error instanceof Error ? error.message : "无法恢复登录状态";
-  } finally {
-    authRestoring.value = false;
-  }
-});
+const authRestoring = session.restoring;
+const applyAccount = session.apply;
+const signOut = session.signOut;
+const reset = session.resetDemo;
+
+const stopSessionEvents = onSessionExpired(() => session.handleExpiry());
+onMounted(() => void session.restore());
 onBeforeUnmount(() => {
   stopSessionEvents();
   stopVoice();
