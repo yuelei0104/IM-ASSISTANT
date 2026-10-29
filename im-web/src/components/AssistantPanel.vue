@@ -88,7 +88,9 @@ const { items: groupSummaries, evidenceFor: summaryEvidenceFor,
             <p v-if="agentError" class="error-text" role="alert">{{ agentError }}</p>
             <div v-if="agentAnswer" class="summary-card">
               <p class="group-summary-text">{{ agentAnswer.answer }}</p>
-              <strong v-if="agentAnswer.sources.length">可核对的来源</strong>
+              <strong v-if="agentAnswer.sources.length" class="summary-label"
+                >可核对的来源</strong
+              >
               <div
                 v-for="source in agentAnswer.sources"
                 :key="source.id"

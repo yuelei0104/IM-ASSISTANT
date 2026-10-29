@@ -124,7 +124,7 @@ export function initialState(): DemoState {
         name: "陈嘉树",
         handle: "chenjiashu",
         initials: "陈",
-        color: "mint",
+        color: "rose",
         status: "away",
         note: "服务端开发 · 稍后回复",
       },

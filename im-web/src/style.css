@@ -230,37 +230,40 @@ svg {
   border-radius: 19px;
   font-size: 24px;
 }
+/* The initials are the only thing saying who spoke, so every pair clears 4.5:1
+   instead of the 2.5-3.1:1 the pastel-on-pastel version had. Mint became rose:
+   it was the one green left in a purple and warm-toned palette. */
 .avatar.peach {
   background: #ffe9e0;
-  color: #d47862;
+  color: #a04f38;
 }
 .avatar.blue {
   background: #e1efff;
-  color: #6487c4;
+  color: #45689f;
 }
-.avatar.mint {
-  background: #e2f4eb;
-  color: #5b9b83;
+.avatar.rose {
+  background: #ffe6ef;
+  color: #a8456b;
 }
 .avatar.gold {
   background: #fff1d7;
-  color: #b99447;
+  color: #8a6a1e;
 }
 .avatar.lilac {
   background: #eee5f7;
-  color: #8b71af;
+  color: #6b528f;
 }
 .avatar.violet {
   background: #e6e4f8;
-  color: #7974b6;
+  color: #585398;
 }
 .avatar.indigo {
   background: #dfeaf8;
-  color: #5e84b2;
+  color: #405f8a;
 }
 .avatar.teal {
   background: #def1f0;
-  color: #4c9a9a;
+  color: #2f6a6a;
 }
 .chat-layout {
   display: flex;
@@ -606,6 +609,10 @@ svg {
   flex: 1;
   overflow-y: auto;
   scroll-behavior: smooth;
+  /* Messages end flush against the notice bar, so a scrolled-up bubble looked
+     sliced in half. The mask fades the top few pixels instead of cutting. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 12px);
 }
 .messages-inner {
   max-width: 840px;
@@ -1711,6 +1718,20 @@ svg {
 .drawer-leave { margin-top: 14px; }
 .drawer-dissolve { margin-top: 14px; color: #b04747; }
 .message-recall { font-size: 11px; padding: 0 4px; }
+/* Two links per message became ten visible links in a short conversation, all
+   sitting inside the reading path. They stay in the layout (no shift on hover)
+   but only surface when the row is hovered or holds focus. Touch devices keep
+   them visible because there is no hover to reveal them. */
+@media (hover: hover) and (pointer: fine) {
+  .message-recall {
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .message-row:hover .message-recall,
+  .message-row:focus-within .message-recall {
+    opacity: 1;
+  }
+}
 .bubble.recalled { color: var(--text-muted); background: #eeeff2; font-style: italic; }
 .drawer-toggle {
   display: flex;
