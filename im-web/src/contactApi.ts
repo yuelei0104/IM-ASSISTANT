@@ -1,4 +1,4 @@
-import { ApiError, sessionToken } from "./authApi";
+import { requestJson } from "./apiClient";
 
 export type ContactProfile = { id: number; nickname: string; handle: string };
 export type ContactPage<T> = { items: T[]; nextCursor: number | null };
@@ -24,30 +24,10 @@ async function request<T>(
   method = "GET",
   body?: object,
 ): Promise<T> {
-  const token = sessionToken();
-  if (!token) throw new ApiError("请先登录", 401);
-  let response: Response;
-  try {
-    response = await fetch(`${apiBase}/contacts${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-  } catch {
-    throw new ApiError("无法连接用户服务，请确认后端已启动", 0);
-  }
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    throw new ApiError(
-      payload?.message || "操作失败，请稍后重试",
-      response.status,
-    );
-  }
-  if (response.status === 204 || response.status === 201 || response.status === 202) return undefined as T;
-  return response.json() as Promise<T>;
+  return requestJson<T>(`${apiBase}/contacts${path}`, {
+    method, body, emptyStatuses: [201, 202],
+    fallback: () => "操作失败，请稍后重试",
+  });
 }
 
 export const listFriends = (afterId?: number) => request<ContactPage<ContactProfile>>(

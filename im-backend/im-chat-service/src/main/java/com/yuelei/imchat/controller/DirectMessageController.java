@@ -5,6 +5,7 @@ import com.yuelei.imchat.dto.MessageDtos.Send;
 import com.yuelei.imchat.dto.MessageDtos.SyncPage;
 import com.yuelei.imchat.model.DirectMessage;
 import com.yuelei.imchat.service.DirectMessageService;
+import com.yuelei.imchat.service.UserAccessClient;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.HttpStatus;
@@ -13,12 +14,17 @@ import org.springframework.http.HttpStatus;
 @RequestMapping("/api/chats/direct/{friendId}/messages")
 public class DirectMessageController {
     private final DirectMessageService service;
+    private final UserAccessClient access;
 
-    public DirectMessageController(DirectMessageService service) { this.service = service; }
+    public DirectMessageController(DirectMessageService service, UserAccessClient access) {
+        this.service = service;
+        this.access = access;
+    }
 
     @PostMapping
     public DirectMessage send(@RequestHeader(value = "Authorization", required = false) String authorization,
                               @PathVariable long friendId, @Valid @RequestBody Send input) {
+        if (friendId > 0) access.requireFriend(authorization, friendId);
         return service.send(authorization, friendId, input);
     }
 

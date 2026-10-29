@@ -1,4 +1,7 @@
 import type { ContactType, RegistrationInput } from "./authValidation";
+import { requestJson, ApiError } from "./apiClient";
+import { sessionKey, sessionToken, clearSession } from "./session";
+export { sessionKey, sessionToken, clearSession, ApiError };
 
 export type CodePurpose = "register" | "login" | "bind" | "reset";
 
@@ -25,7 +28,6 @@ export type CodeResponse = {
   devCode: string | null;
 };
 
-export const sessionKey = "im-assistant-server-token-v1";
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(
   /\/$/,
   "",
@@ -33,20 +35,6 @@ const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(
 
 export function accountStateKey(id: number): string {
   return `im-assistant-local-state-user-${id}`;
-}
-
-export function sessionToken(): string | null {
-  try {
-    return sessionStorage.getItem(sessionKey);
-  } catch {
-    return null;
-  }
-}
-
-export function clearSession(): void {
-  try {
-    sessionStorage.removeItem(sessionKey);
-  } catch {}
 }
 
 function account(value: ServerAccount): Account {
@@ -59,53 +47,16 @@ function account(value: ServerAccount): Account {
   };
 }
 
-export class ApiError extends Error {
-  readonly status: number;
-
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
-}
-
 async function request<T>(
   path: string,
   body?: object,
   token?: string,
 ): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${apiBase}/auth${path}`, {
-      method: body === undefined ? "GET" : "POST",
-      headers: {
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
-  } catch {
-    throw new ApiError("无法连接用户服务，请确认后端已在 8081 端口启动", 0);
-  }
-  if (response.status === 204) return undefined as T;
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ApiError(
-      response.status >= 500
-        ? "用户服务暂不可用，请检查后端是否已启动"
-        : `用户服务返回 HTTP ${response.status}，响应格式无法识别；请检查浏览器请求来源与网关`,
-      response.status,
-    );
-  }
-  if (!response.ok) {
-    const message = (payload as { message?: unknown } | null)?.message;
-    throw new ApiError(
-      typeof message === "string" ? message : "操作失败，请稍后重试",
-      response.status,
-    );
-  }
-  return payload as T;
+  return requestJson<T>(`${apiBase}/auth${path}`, {
+    method: body === undefined ? "GET" : "POST", body, token: token ?? null,
+    requireAuth: false,
+    fallback: () => "操作失败，请稍后重试",
+  });
 }
 
 function requireSession(): string {

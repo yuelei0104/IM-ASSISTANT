@@ -133,7 +133,7 @@ test("server errors surface without creating a local account or token", async ()
   };
   await assert.rejects(
     sendCode("login", "email", "a@example.com"),
-    /无法连接用户服务/,
+    /无法连接服务/,
   );
 });
 

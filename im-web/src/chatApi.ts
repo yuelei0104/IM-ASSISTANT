@@ -1,4 +1,5 @@
-import { ApiError, sessionToken } from "./authApi";
+import { sessionToken } from "./session";
+import { requestJson } from "./apiClient";
 
 export type DirectMessage = {
   id: number;
@@ -19,35 +20,10 @@ export type RecallPage = { items: MessageRecall[]; nextAfterId: number | null };
 const apiBase = (import.meta.env?.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
 async function request<T>(path: string, body?: object, method?: "DELETE"): Promise<T> {
-  const token = sessionToken();
-  if (!token) throw new ApiError("请先登录", 401);
-  let response: Response;
-  try {
-    response = await fetch(`${apiBase}/chats/direct${path}`, {
-      method: method || (body ? "POST" : "GET"),
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-  } catch {
-    throw new ApiError("无法连接消息服务，请确认 8082 端口已启动", 0);
-  }
-  if (!response.ok) {
-    const payload = await response.json().catch(() => null);
-    const serverMessage = payload && typeof payload.message === "string"
-      ? payload.message : null;
-    const fallback = response.status === 401
-      ? "登录已过期，请重新登录"
-      : response.status === 403
-        ? "无权访问此会话"
-        : response.status >= 500
-          ? `消息请求失败（HTTP ${response.status}），请检查 8082 服务窗口和 Vite 代理日志`
-          : `消息请求失败（HTTP ${response.status}）`;
-    throw new ApiError(serverMessage || fallback, response.status);
-  }
-  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+  return requestJson<T>(`${apiBase}/chats/direct${path}`, {
+    method: method || (body ? "POST" : "GET"), body,
+    fallback: (status) => status === 403 ? "无权访问此会话" : `消息请求失败（HTTP ${status}）`,
+  });
 }
 
 export function loadDirectMessages(peerId: number, beforeId?: number, limit = 50) {

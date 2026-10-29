@@ -4,6 +4,7 @@ import com.yuelei.imchat.dto.GroupDtos;
 import com.yuelei.imchat.model.GroupChat;
 import com.yuelei.imchat.model.GroupMessage;
 import com.yuelei.imchat.service.GroupService;
+import com.yuelei.imchat.service.UserAccessClient;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
@@ -12,12 +13,17 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/chats/groups")
 public class GroupController {
     private final GroupService groups;
+    private final UserAccessClient access;
 
-    public GroupController(GroupService groups) { this.groups = groups; }
+    public GroupController(GroupService groups, UserAccessClient access) {
+        this.groups = groups;
+        this.access = access;
+    }
 
     @PostMapping
     public GroupChat create(@RequestHeader(value = "Authorization", required = false) String auth,
                             @Valid @RequestBody GroupDtos.Create request) {
+        access.prefetchFriends(auth, request.friendIds());
         return groups.create(auth, request);
     }
 
@@ -37,6 +43,7 @@ public class GroupController {
     @PostMapping("/{groupId}/members")
     public GroupChat invite(@RequestHeader(value = "Authorization", required = false) String auth,
                             @PathVariable long groupId, @Valid @RequestBody GroupDtos.Invite request) {
+        access.prefetchFriends(auth, request.friendIds());
         return groups.invite(auth, groupId, request);
     }
 

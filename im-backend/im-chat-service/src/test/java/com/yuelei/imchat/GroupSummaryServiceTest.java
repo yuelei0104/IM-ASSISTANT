@@ -7,6 +7,7 @@ import com.yuelei.imchat.model.GroupMessage;
 import com.yuelei.imchat.model.GroupSummary;
 import com.yuelei.imchat.model.SummarySource;
 import com.yuelei.imchat.service.GroupSummaryService;
+import com.yuelei.imchat.service.GroupSummaryWriter;
 import com.yuelei.imchat.service.SummaryGenerator;
 import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,8 @@ class GroupSummaryServiceTest {
     private final GroupSummaryDao summaries = mock(GroupSummaryDao.class);
     private final UserAccessClient access = mock(UserAccessClient.class);
     private final SummaryGenerator generator = mock(SummaryGenerator.class);
-    private final GroupSummaryService service = new GroupSummaryService(groups, summaries, access, generator);
+    private final GroupSummaryService service = new GroupSummaryService(
+            groups, summaries, access, generator, new GroupSummaryWriter(groups, summaries));
 
     @BeforeEach
     void groupExists() {

@@ -8,7 +8,6 @@ import com.yuelei.imchat.model.GroupSummary;
 import com.yuelei.imchat.model.SummarySource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -20,16 +19,18 @@ public class GroupSummaryService {
     private final GroupSummaryDao summaries;
     private final UserAccessClient access;
     private final SummaryGenerator generator;
+    private final GroupSummaryWriter writer;
 
     public GroupSummaryService(GroupDao groups, GroupSummaryDao summaries,
-                               UserAccessClient access, SummaryGenerator generator) {
+                               UserAccessClient access, SummaryGenerator generator,
+                               GroupSummaryWriter writer) {
         this.groups = groups;
         this.summaries = summaries;
         this.access = access;
         this.generator = generator;
+        this.writer = writer;
     }
 
-    @Transactional
     public GroupSummary generate(String auth, long groupId) {
         long userId = access.requireUser(auth);
         var membership = member(groupId, userId);
@@ -41,22 +42,9 @@ public class GroupSummaryService {
         String content = generator.summarize(List.copyOf(messages));
         if (content == null || content.isBlank() || content.length() > 2000)
             throw new ChatException(HttpStatus.BAD_GATEWAY, "摘要内容无效");
-        // Serialize saving with recall and dissolution, which also lock this group.
-        if (groups.lockGroup(groupId) == null)
-            throw new ChatException(HttpStatus.NOT_FOUND, "讨论室不存在");
-        // Recheck access after the slow model call, before saving anything.
-        var current = member(groupId, userId);
-        if (messages.get(0).id() <= current.joinedAfterId())
-            throw new ChatException(HttpStatus.FORBIDDEN, "无权总结加入前的消息");
-        var draft = new GroupSummaryDao.Draft(groupId, userId, messages.get(0).id(),
-                messages.get(messages.size() - 1).id(), content,
-                messages.stream().map(GroupMessage::id).toList());
-        if (summaries.insert(draft) != 1)
-            throw new ChatException(HttpStatus.FORBIDDEN, "无权总结加入前的消息");
-        if (draft.getId() == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "摘要保存失败");
-        GroupSummary saved = summaries.visibleById(draft.getId(), groupId, userId);
-        if (saved == null) throw new ChatException(HttpStatus.INTERNAL_SERVER_ERROR, "摘要读取失败");
-        return saved;
+        // Inference runs outside the transaction. The writer obtains the group lock,
+        // rechecks current membership and writes the guarded summary in a short transaction.
+        return writer.save(groupId, userId, List.copyOf(messages), content);
     }
 
     public List<GroupSummary> list(String auth, long groupId) {

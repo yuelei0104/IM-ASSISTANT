@@ -49,10 +49,12 @@ import {
   transferGroupOwner, dissolveGroup,
   recallGroupMessage, listGroupRecalls,
   listGroups, loadGroupMessages,
-  markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages, listGroupSummaries, generateGroupSummary,
-  listGroupSummarySources, translateGroupMessage, type GroupChat, type GroupMessage, type GroupSummary, type SummarySource,
-  askGroupAgent, type GroupAgentAnswer,
+  markGroupRead, sendGroupMessage, syncGroupMessages, searchGroupMessages,
+  translateGroupMessage, type GroupChat, type GroupMessage,
 } from "./groupApi";
+import { useGroupAgent } from "./useGroupAgent";
+import { useGroupSummaries } from "./useGroupSummaries";
+import { onSessionExpired } from "./session";
 import { listMentionNotices, markAllMentionsRead, markMentionRead, getAlertKeywords, saveAlertKeywords, type MentionNotice } from "./noticeApi";
 import { listTasks, createTask, updateTaskDetails, completeTask, deleteTask, type PersonalTask, type TaskSource } from "./taskApi";
 import { syncForward } from "./incrementalSync";
@@ -227,20 +229,31 @@ const groupRecallCursor = ref(0);
 const directRecalled = new Map<number, string>();
 const groupRecalled = new Map<number, string>();
 const recallingMessageId = ref<string | null>(null);
-const groupSummaries = ref<GroupSummary[]>([]);
-const summaryEvidenceFor = ref<number | null>(null);
-const summaryEvidence = ref<SummarySource[]>([]);
-const summaryEvidenceBusy = ref(false);
-const summaryEvidenceError = ref("");
-let summaryEvidenceSeq = 0;
-const summaryBusy = ref(false);
-const summaryError = ref("");
-let summarySeq = 0;
-const agentQuestion = ref("");
-const agentAnswer = ref<GroupAgentAnswer | null>(null);
-const agentError = ref("");
-const agentBusy = ref(false);
-let agentSeq = 0;
+const summaries = useGroupSummaries(
+  () => serverGroupId(activeId.value),
+  () => currentAccount.value?.id ?? null,
+  showSummary,
+);
+const groupSummaries = summaries.items;
+const summaryEvidenceFor = summaries.evidenceFor;
+const summaryEvidence = summaries.evidence;
+const summaryEvidenceBusy = summaries.evidenceBusy;
+const summaryEvidenceError = summaries.evidenceError;
+const summaryBusy = summaries.busy;
+const summaryError = summaries.error;
+const loadGroupSummaries = summaries.load;
+const createGroupSummary = summaries.create;
+const toggleSummaryEvidence = summaries.toggleEvidence;
+const agent = useGroupAgent(
+  () => serverGroupId(activeId.value),
+  () => currentAccount.value?.id ?? null,
+  () => activeId.value,
+);
+const agentQuestion = agent.question;
+const agentAnswer = agent.answer;
+const agentError = agent.error;
+const agentBusy = agent.busy;
+const askAgent = agent.ask;
 const groupSyncCursor = ref<number | null>(null);
 const groupNextBeforeId = ref<number | null>(null);
 const groupBusy = ref(false);
@@ -331,22 +344,14 @@ watch(knownPeers, (peers) => {
   try { localStorage.setItem(peerCacheKey(currentAccount.value.id), JSON.stringify(peers)); } catch {}
 }, { deep: true });
 watch(activeId, () => {
-  agentSeq++;
-  agentQuestion.value = "";
-  agentAnswer.value = null;
-  agentError.value = "";
-  agentBusy.value = false;
+  agent.reset();
   clearTranslationPreview();
   closeHistorySearch();
   closeMessageContext(false);
   mentionPickerOpen.value = false;
   mentionSelections.value = {};
   showSummary.value = false;
-  groupSummaries.value = [];
-  clearSummaryEvidence();
-  summaryBusy.value = false;
-  summaryError.value = "";
-  summarySeq++;
+  summaries.reset();
   showOlder.value = false;
   stopVoice();
   directMessages.value = [];
@@ -486,13 +491,6 @@ const summarySources = computed(() =>
     .filter((m) => m.kind !== "system" && !m.recalled && m.senderId !== selfId)
     .slice(-3),
 );
-function clearSummaryEvidence() {
-  summaryEvidenceSeq++;
-  summaryEvidenceFor.value = null;
-  summaryEvidence.value = [];
-  summaryEvidenceBusy.value = false;
-  summaryEvidenceError.value = "";
-}
 function clearTranslationPreview() {
   translationSeq++;
   translationPreview.value = null;
@@ -536,101 +534,6 @@ function useTranslationPreview() {
   composer.value = combined;
   clearTranslationPreview();
   notify("译文已填入输入框，请检查后自行发送");
-}
-async function toggleSummaryEvidence(summaryId: number) {
-  if (summaryEvidenceFor.value === summaryId) {
-    clearSummaryEvidence();
-    return;
-  }
-  const groupId = serverGroupId(activeId.value);
-  const accountId = currentAccount.value?.id;
-  if (!groupId || !accountId) return;
-  const sequence = ++summaryEvidenceSeq;
-  summaryEvidenceFor.value = summaryId;
-  summaryEvidence.value = [];
-  summaryEvidenceError.value = "";
-  summaryEvidenceBusy.value = true;
-  try {
-    const items = await listGroupSummarySources(groupId, summaryId);
-    if (sequence !== summaryEvidenceSeq || currentAccount.value?.id !== accountId
-        || serverGroupId(activeId.value) !== groupId) return;
-    summaryEvidence.value = items;
-  } catch (error) {
-    if (sequence === summaryEvidenceSeq && currentAccount.value?.id === accountId) {
-      summaryEvidenceError.value = error instanceof Error ? error.message : "无法查看摘要依据";
-      // A recalled message or changed membership may invalidate the summary.
-      void loadGroupSummaries();
-    }
-  } finally {
-    if (sequence === summaryEvidenceSeq) summaryEvidenceBusy.value = false;
-  }
-}
-async function loadGroupSummaries() {
-  const groupId = serverGroupId(activeId.value);
-  const accountId = currentAccount.value?.id;
-  if (!groupId || !accountId || summaryBusy.value) return;
-  const sequence = ++summarySeq;
-  summaryBusy.value = true;
-  summaryError.value = "";
-  try {
-    const items = await listGroupSummaries(groupId);
-    if (sequence !== summarySeq || currentAccount.value?.id !== accountId
-        || serverGroupId(activeId.value) !== groupId) return;
-    groupSummaries.value = items;
-    if (summaryEvidenceFor.value !== null && !items.some((item) => item.id === summaryEvidenceFor.value))
-      clearSummaryEvidence();
-    showSummary.value = true;
-  } catch (error) {
-    if (sequence === summarySeq)
-      summaryError.value = error instanceof Error ? error.message : "摘要加载失败";
-  } finally {
-    if (sequence === summarySeq) summaryBusy.value = false;
-  }
-}
-async function createGroupSummary() {
-  const groupId = serverGroupId(activeId.value);
-  const accountId = currentAccount.value?.id;
-  if (!groupId || !accountId || summaryBusy.value) return;
-  const sequence = ++summarySeq;
-  summaryBusy.value = true;
-  summaryError.value = "";
-  try {
-    const summary = await generateGroupSummary(groupId);
-    if (sequence !== summarySeq || currentAccount.value?.id !== accountId
-        || serverGroupId(activeId.value) !== groupId) return;
-    groupSummaries.value = [summary, ...groupSummaries.value.filter((item) => item.id !== summary.id)].slice(0, 20);
-    showSummary.value = true;
-  } catch (error) {
-    if (sequence === summarySeq)
-      summaryError.value = error instanceof Error ? error.message : "摘要生成失败";
-  } finally {
-    if (sequence === summarySeq) summaryBusy.value = false;
-  }
-}
-async function askAgent() {
-  const groupId = serverGroupId(activeId.value);
-  const accountId = currentAccount.value?.id;
-  const question = agentQuestion.value.trim();
-  if (!groupId || !accountId || agentBusy.value) return;
-  if (question.length < 2 || question.length > 300) {
-    agentError.value = "问题应为 2 到 300 个字符";
-    return;
-  }
-  const sequence = ++agentSeq;
-  const conversationId = activeId.value;
-  agentBusy.value = true;
-  agentAnswer.value = null;
-  agentError.value = "";
-  try {
-    const result = await askGroupAgent(groupId, question);
-    if (sequence === agentSeq && currentAccount.value?.id === accountId && activeId.value === conversationId)
-      agentAnswer.value = result;
-  } catch (error) {
-    if (sequence === agentSeq && currentAccount.value?.id === accountId && activeId.value === conversationId)
-      agentError.value = error instanceof Error ? error.message : "Agent 问答失败";
-  } finally {
-    if (sequence === agentSeq) agentBusy.value = false;
-  }
 }
 function person(id: string): Person {
   return (
@@ -868,20 +771,15 @@ function forgetGroup(groupId: number) {
   serverGroups.value = serverGroups.value.filter((group) => group.id !== groupId);
   mentionNotices.value = mentionNotices.value.filter((notice) => notice.groupId !== groupId);
   if (serverGroupId(activeId.value) === groupId) {
-    agentSeq++;
-    agentAnswer.value = null;
-    agentError.value = "";
-    agentBusy.value = false;
+    agent.reset();
     chatSeq++;
-    summarySeq++;
+    summaries.reset();
     closeHistorySearch();
     closeMessageContext(false);
     stopVoice();
     groupMessages.value = [];
     groupRecallCursor.value = 0;
     groupRecalled.clear();
-    groupSummaries.value = [];
-    clearSummaryEvidence();
     clearTranslationPreview();
     groupSyncCursor.value = null;
     groupNextBeforeId.value = null;
@@ -933,12 +831,7 @@ function mergeGroup(incoming: GroupMessage[]) {
   groupMessages.value = [...byId.values()].sort((a, b) => a.id - b.id);
 }
 function applyGroupRecall(recall: MessageRecall) {
-  if (agentAnswer.value?.sources.some((source) => source.id === recall.messageId)) {
-    agentSeq++;
-    agentAnswer.value = null;
-    agentBusy.value = false;
-    agentError.value = "引用的消息已撤回，请重新提问";
-  }
+  agent.invalidateOnRecall();
   if (translationPreview.value?.messageId === recall.messageId ||
       translationBusy.value === `group-message-${recall.messageId}`) clearTranslationPreview();
   groupRecalled.set(recall.messageId, recall.recalledAt);
@@ -951,10 +844,7 @@ function applyGroupRecall(recall: MessageRecall) {
     contextTarget.value = redact(contextTarget.value);
   historyResults.value = historyResults.value.filter((m) => !("groupId" in m) || m.id !== recall.messageId);
   // A cached summary may contain text from the recalled message.
-  summarySeq++;
-  summaryBusy.value = false;
-  groupSummaries.value = [];
-  clearSummaryEvidence();
+  summaries.invalidate();
 }
 async function syncGroupRecalls(groupId: number, accountId: number, sequence: number) {
   let changed = false;
@@ -1260,11 +1150,7 @@ async function requestCode(
   }
 }
 function applyAccount(account: Account) {
-  agentSeq++;
-  agentAnswer.value = null;
-  agentQuestion.value = "";
-  agentError.value = "";
-  agentBusy.value = false;
+  agent.reset();
   clearTranslationPreview();
   chatSocket?.close();
   pendingRealtimeRefresh = false;
@@ -1285,11 +1171,7 @@ function applyAccount(account: Account) {
   groupRecallCursor.value = 0;
   directRecalled.clear();
   groupRecalled.clear();
-  groupSummaries.value = [];
-  clearSummaryEvidence();
-  summaryBusy.value = false;
-  summaryError.value = "";
-  summarySeq++;
+  summaries.reset();
   taskSeq++;
   personalTasks.value = [];
   taskNextBeforeId.value = null;
@@ -1426,6 +1308,11 @@ async function loadMoreRequests() {
     if (sequence === contactsSeq) contactsBusy.value = false;
   }
 }
+const stopSessionEvents = onSessionExpired(() => {
+  if (currentAccount.value) resetClientState();
+  authRestoring.value = false;
+  authError.value = "登录已过期，请重新登录";
+});
 onMounted(async () => {
   if (!sessionToken()) return;
   try {
@@ -1530,11 +1417,6 @@ async function submitAuth() {
   }
 }
 async function signOut() {
-  agentSeq++;
-  agentAnswer.value = null;
-  agentQuestion.value = "";
-  agentError.value = "";
-  agentBusy.value = false;
   try {
     await logout();
   } catch (error) {
@@ -1544,6 +1426,10 @@ async function signOut() {
       return;
     }
   }
+  resetClientState();
+}
+function resetClientState() {
+  agent.reset();
   stopVoice();
   clearTranslationPreview();
   closeHistorySearch();
@@ -1572,11 +1458,7 @@ async function signOut() {
   groupRecallCursor.value = 0;
   directRecalled.clear();
   groupRecalled.clear();
-  groupSummaries.value = [];
-  clearSummaryEvidence();
-  summaryBusy.value = false;
-  summaryError.value = "";
-  summarySeq++;
+  summaries.reset();
   taskSeq++;
   personalTasks.value = [];
   taskNextBeforeId.value = null;
@@ -2430,6 +2312,7 @@ function visibility() {
 }
 document.addEventListener("visibilitychange", visibility);
 onBeforeUnmount(() => {
+  stopSessionEvents();
   stopVoice();
   closeHistorySearch();
   closeMessageContext(false);

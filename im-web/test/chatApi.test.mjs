@@ -56,7 +56,7 @@ test("socket authenticates without URL token and refreshes after a notification"
 test("an empty proxy error reports its HTTP status", async () => {
   globalThis.sessionStorage = { getItem: (key) => key === sessionKey ? "alice-token" : null };
   globalThis.fetch = async () => new Response("", { status: 500 });
-  await assert.rejects(loadDirectMessages(2), /HTTP 500.*8082/);
+  await assert.rejects(loadDirectMessages(2), /HTTP 500/);
 });
 
 test("unread summary and read receipt use authenticated endpoints", async () => {
