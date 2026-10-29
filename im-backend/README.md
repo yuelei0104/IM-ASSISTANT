@@ -1,5 +1,10 @@
 # Local infrastructure
 
+For the separate, containerized private release stack, see
+[`deploy/README.md`](deploy/README.md). It builds Java and web images, has one
+loopback web entry point, a backup/restore drill, and SMTP email verification
+when configured. The instructions below remain for the local development stack.
+
 From `D:\im-assistant\im-backend` in PowerShell:
 
 ```powershell
@@ -85,6 +90,33 @@ For backend applications running directly on Windows, use MySQL at
 `127.0.0.1:16380`, plus pgvector at `127.0.0.1:15432` (database `im_vectors`,
 user `im_vector`). Database users/passwords are initialized only when their
 named volumes are first created; changing `.env` later does not change them.
+
+### Local meeting demo data
+
+After the development stack reports ready, create a fictional four-person
+meeting with a fifth account kept outside the group:
+
+```powershell
+Set-Location D:\im-assistant\im-backend
+python .\tools\seed_demo_meeting.py --dry-run
+python .\tools\seed_demo_meeting.py
+notepad .\.local-stack\demo-meeting.json
+```
+
+The script registers five disposable accounts with synthetic phone numbers,
+adds three friends, creates a four-member discussion room, and sends 136
+distinct messages about a fictional release meeting. It checks all four
+members' paginated history and rejects a fifth account's attempt to read
+the group. For an older email-only fixture it binds synthetic phone numbers
+to the original accounts, preserving the existing room and messages. Open
+the ignored JSON file to see the test phone numbers, then select `手机号` and
+`验证码登录` on the local web page. Click `获取验证码`; the development code
+appears on that page. No real SMS is sent. The JSON also contains random
+passwords used internally by the seed script for safe retries. Do not publish
+it or use this workflow on a publicly reachable deployment. The script does
+not delete existing data. If interrupted, rerun the same command: stable
+message IDs avoid duplicates. Group summary and Agent model quality require
+separate testing with Ollama.
 
 Run `docker compose stop` to pause these containers, or `docker compose up -d`
 to start them again. Named volumes retain data across container restarts.
@@ -460,9 +492,13 @@ This is a bounded, private group-message RAG workflow, not an enterprise
 knowledge base. `POST /api/chats/groups/{groupId}/agent/ask` accepts
 `{"question":"下次会议需要准备什么？"}` and returns an answer plus the group
 message IDs and text used as checkable sources. The endpoint requires the
-caller's existing bearer session and group membership. It loads at most 30
-messages newer than that member's join cursor, excludes recalled messages,
-and truncates each input to 500 characters. It rechecks membership, join cursor
+caller's existing bearer session and group membership. It walks all messages
+newer than that member's join cursor in pages of 100, excludes recalled
+messages, and truncates each indexed input to 500 characters. There is no
+fixed limit on the history searched: embedding is batched in groups of 32,
+and only the three most relevant messages enter the model prompt. The first
+question over a large group may take longer while its history is indexed.
+It rechecks membership, join cursor
 and live source visibility **after** inference. The response is not stored and
 uses `Cache-Control: no-store`.
 
@@ -470,10 +506,10 @@ LangChain4j embeds the permitted messages and question using local Ollama
 `bge-m3` (1024 dimensions). PostgreSQL with pgvector persists each eligible
 message's embedding and SHA-256 content hash, keyed by group, message and model;
 it stores no group message text. A later question reuses unchanged embeddings.
-The query first limits rows to the caller's at-most-30 authorized message IDs,
-then pgvector ranks this bounded set by cosine distance and returns the top
-three IDs. MySQL source visibility is checked again before returning an answer.
-The index uses exact ranking over the bounded set rather than global ANN search.
+The query filters rows to the caller's authorized message IDs, then pgvector
+ranks them by cosine distance and returns the top three IDs. MySQL source
+visibility is checked again before returning an answer. The index uses exact
+ranking over the authorized set rather than global ANN search.
 LangChain4j's AI Service then generates the answer. A
 single `@Tool` allows the model to inspect a message from that same authorized
 snapshot by ID. The tool has no write operations or access to other groups.

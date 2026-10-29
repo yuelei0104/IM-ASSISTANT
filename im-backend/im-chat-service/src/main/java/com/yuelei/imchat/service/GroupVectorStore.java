@@ -10,6 +10,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
@@ -18,6 +19,7 @@ import java.util.Map;
 /** PostgreSQL stores only vector data. The caller supplies an authorized MySQL snapshot. */
 @Component
 public class GroupVectorStore {
+    private static final int SEARCH_BATCH_SIZE = 256;
     private final String url;
     private final String user;
     private final String password;
@@ -25,9 +27,9 @@ public class GroupVectorStore {
     public GroupVectorStore(@Value("${im.agent.pgvector.url}") String url,
                             @Value("${im.agent.pgvector.user}") String user,
                             @Value("${im.agent.pgvector.password:}") String password) {
-        if (!url.startsWith("jdbc:postgresql://127.0.0.1:")
-                && !url.startsWith("jdbc:postgresql://localhost:"))
-            throw new IllegalArgumentException("群聊向量库必须连接本机 PostgreSQL");
+        // Only the local development database or the private Compose service.
+        if (!url.matches("jdbc:postgresql://(?:127\\.0\\.0\\.1|localhost|pgvector):[0-9]{1,5}/im_vectors(?:\\?.*)?"))
+            throw new IllegalArgumentException("群聊向量库必须连接本机或内部 pgvector 服务");
         this.url = url;
         this.user = user;
         this.password = password;
@@ -83,23 +85,31 @@ public class GroupVectorStore {
 
     public List<Long> nearest(long groupId, String model, List<Long> eligibleIds, float[] question) {
         if (eligibleIds.isEmpty()) return List.of();
-        // Materialize the authorized candidate set before ranking. An approximate
-        // global ANN query could miss eligible rows after filtering by membership.
+        // Rank each authorized ID batch exactly, then merge their best three.
+        // The union of per-batch top threes contains the global top three.
+        // This keeps JDBC array and SQL work bounded without limiting history.
         String sql = "WITH permitted AS MATERIALIZED ("
                 + "SELECT message_id, embedding FROM im_group_message_embedding "
                 + "WHERE group_id = ? AND model = ? AND message_id = ANY (?)"
-                + ") SELECT message_id FROM permitted "
-                + "ORDER BY embedding <=> CAST(? AS vector), message_id LIMIT 3";
+                + ") SELECT message_id, embedding <=> CAST(? AS vector) AS score FROM permitted "
+                + "ORDER BY score, message_id LIMIT 3";
+        record ScoredId(long id, double distance) { }
         try (var connection = connect(); var query = connection.prepareStatement(sql)) {
-            query.setLong(1, groupId);
-            query.setString(2, model);
-            query.setArray(3, connection.createArrayOf("bigint", eligibleIds.toArray(Long[]::new)));
-            query.setString(4, vector(question));
-            var ids = new ArrayList<Long>();
-            try (var rows = query.executeQuery()) {
-                while (rows.next()) ids.add(rows.getLong(1));
+            var best = new ArrayList<ScoredId>();
+            String questionVector = vector(question);
+            for (int offset = 0; offset < eligibleIds.size(); offset += SEARCH_BATCH_SIZE) {
+                var batch = eligibleIds.subList(offset,
+                        Math.min(offset + SEARCH_BATCH_SIZE, eligibleIds.size()));
+                query.setLong(1, groupId);
+                query.setString(2, model);
+                query.setArray(3, connection.createArrayOf("bigint", batch.toArray(Long[]::new)));
+                query.setString(4, questionVector);
+                try (var rows = query.executeQuery()) {
+                    while (rows.next()) best.add(new ScoredId(rows.getLong(1), rows.getDouble(2)));
+                }
             }
-            return ids;
+            return best.stream().sorted(Comparator.comparingDouble(ScoredId::distance)
+                    .thenComparingLong(ScoredId::id)).limit(3).map(ScoredId::id).toList();
         } catch (SQLException e) {
             throw new IllegalStateException("群聊向量检索失败", e);
         }

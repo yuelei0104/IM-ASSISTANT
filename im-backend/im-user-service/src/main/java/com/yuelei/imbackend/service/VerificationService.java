@@ -5,9 +5,13 @@ import com.yuelei.imbackend.exception.AuthException;
 import com.yuelei.imbackend.util.Contacts.Purpose;
 import com.yuelei.imbackend.util.Contacts.Type;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.HttpStatus;
+import org.springframework.mail.MailException;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -18,7 +22,7 @@ import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 
-/** Local development code delivery. Replace with an SMS/email provider before deployment. */
+/** Development code preview or configured SMTP email; phone delivery requires a provider. */
 @Service
 public class VerificationService {
     private static final Duration CODE_TTL = Duration.ofMinutes(5);
@@ -39,14 +43,25 @@ public class VerificationService {
             """, Long.class);
     private final StringRedisTemplate redis;
     private final boolean devMode;
+    private final JavaMailSender mail;
+    private final String mailHost;
+    private final String mailFrom;
 
-    public VerificationService(StringRedisTemplate redis, @Value("${im.auth.dev-mode:false}") boolean devMode) {
+    public VerificationService(StringRedisTemplate redis, @Value("${im.auth.dev-mode:false}") boolean devMode,
+                               ObjectProvider<JavaMailSender> mail,
+                               @Value("${spring.mail.host:}") String mailHost,
+                               @Value("${im.auth.mail-from:}") String mailFrom) {
         this.redis = redis;
         this.devMode = devMode;
+        this.mail = mail.getIfAvailable();
+        this.mailHost = mailHost;
+        this.mailFrom = mailFrom;
     }
 
     public CodeSent send(Purpose purpose, Type type, String contact) {
-        if (!devMode) throw new AuthException(HttpStatus.SERVICE_UNAVAILABLE, "验证码发送服务尚未配置");
+        if (!devMode && (type != Type.EMAIL || mailHost.isBlank() || mailFrom.isBlank() || mail == null))
+            throw new AuthException(HttpStatus.SERVICE_UNAVAILABLE,
+                    type == Type.PHONE ? "手机号验证码服务尚未配置，请使用邮箱" : "邮箱验证码服务尚未配置");
         String key = key(purpose, type, contact);
         Boolean acquired = redis.opsForValue().setIfAbsent(key + ":cooldown", "1", COOLDOWN);
         if (!Boolean.TRUE.equals(acquired))
@@ -54,7 +69,20 @@ public class VerificationService {
         String code = String.format("%06d", RANDOM.nextInt(1_000_000));
         redis.opsForValue().set(key, digest(code), CODE_TTL);
         redis.delete(key + ":attempts");
-        return new CodeSent(300, 60, code);
+        if (!devMode) {
+            try {
+                var message = new SimpleMailMessage();
+                message.setFrom(mailFrom);
+                message.setTo(contact);
+                message.setSubject("IM Assistant 验证码");
+                message.setText("验证码：" + code + "。5 分钟内有效。如果不是你本人操作，请忽略本邮件。");
+                mail.send(message);
+            } catch (MailException ex) {
+                redis.delete(List.of(key, key + ":attempts", key + ":cooldown"));
+                throw new AuthException(HttpStatus.SERVICE_UNAVAILABLE, "邮箱验证码发送失败，请稍后重试");
+            }
+        }
+        return new CodeSent(300, 60, devMode ? code : null);
     }
 
     public void verifyAndConsume(Purpose purpose, Type type, String contact, String code) {

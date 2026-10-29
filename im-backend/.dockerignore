@@ -1,0 +1,11 @@
+.env
+.env.*
+**/target
+.local-stack
+benchmark-results
+tools/__pycache__
+*.log
+*.patch
+deploy/.env
+deploy/.env.*
+!deploy/.env.example

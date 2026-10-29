@@ -2861,7 +2861,7 @@ onBeforeUnmount(() => {
           }}
         </button>
         <p class="auth-disclaimer">
-          本地开发模式会自动填入后端生成的验证码，不发送短信或邮件。请使用测试联系方式与密码。
+          本地测试模式启用后会自动填入验证码，不发送短信或邮件。正式使用需配置实际验证服务。
         </p>
       </form>
     </div>
@@ -3298,7 +3298,7 @@ onBeforeUnmount(() => {
             <template v-if="serverGroupId(activeId)">
               <div class="agent-ask">
                 <div class="assist-label"><AppIcon name="sparkles" :size="17" /><strong>群聊 Agent 问答</strong></div>
-                <p class="assist-description">仅检索你有权查看的最近 30 条消息；本地模型生成回答，可核对引用。不会自动创建待办。</p>
+                <p class="assist-description">检索你有权查看的讨论室历史消息；本地模型生成回答，可核对引用。不会自动创建待办。</p>
                 <label for="agent-question">向当前讨论室提问</label>
                 <input id="agent-question" v-model="agentQuestion" class="agent-question" maxlength="300"
                   placeholder="例如：下次会议要准备什么？" @keydown.enter.prevent="askAgent" />
@@ -3841,7 +3841,7 @@ onBeforeUnmount(() => {
               {{ bindBusy ? "处理中…" : "关联到当前账号" }}
             </button>
             <small
-              >本地开发模式会自动填入验证码；短信和邮件发送尚未接入。</small
+              >本地测试模式会自动填入验证码；正式环境邮箱验证需配置 SMTP，短信暂未接入。</small
             >
           </form>
           <p v-if="bindSuccess" class="success-text" role="status">

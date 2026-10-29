@@ -23,6 +23,7 @@ import java.util.Set;
 @Component
 public class LocalLangChain4jGroupAgent implements GroupAgentEngine {
     private static final Logger log = LoggerFactory.getLogger(LocalLangChain4jGroupAgent.class);
+    private static final int INDEX_BATCH_SIZE = 32;
     private final String chatModelName;
     private final String embeddingModelName;
     private final String baseUrl;
@@ -31,12 +32,15 @@ public class LocalLangChain4jGroupAgent implements GroupAgentEngine {
     public LocalLangChain4jGroupAgent(@Value("${im.agent.model:}") String chatModelName,
                                       @Value("${im.agent.embedding-model:}") String embeddingModelName,
                                       @Value("${im.summary.port:11434}") int port,
+                                      @Value("${im.summary.host:127.0.0.1}") String host,
                                       GroupVectorStore vectors) {
         if (port < 1 || port > 65535) throw new IllegalArgumentException("本地模型端口无效");
+        if (!host.equals("127.0.0.1") && !host.equals("ollama"))
+            throw new IllegalArgumentException("模型必须连接本机或内部 ollama 服务");
         this.chatModelName = chatModelName.trim();
         this.embeddingModelName = embeddingModelName.trim();
-        // Never accept an arbitrary URL: group content stays on local Ollama.
-        this.baseUrl = "http://127.0.0.1:" + port;
+        // Never accept an arbitrary URL: group content stays on the private Ollama service.
+        this.baseUrl = "http://" + host + ":" + port;
         this.vectors = vectors;
     }
 
@@ -64,7 +68,7 @@ public class LocalLangChain4jGroupAgent implements GroupAgentEngine {
             this.used = used;
         }
 
-        @Tool("查看当前提问者可见的最近群消息原文，只接受消息编号")
+        @Tool("查看当前提问者有权查看的群消息原文，只接受消息编号")
         public String inspectVisibleMessage(long messageId) {
             String text = visible.get(messageId);
             if (text == null) return "此消息不在本次授权的可见范围内";
@@ -102,14 +106,21 @@ public class LocalLangChain4jGroupAgent implements GroupAgentEngine {
             }
             stage = "embedding";
             var eligibleIds = usefulMessages.stream().map(Candidate::id).toList();
-            Map<Long, String> storedHashes = vectors.hashes(groupId, embeddingModelName, eligibleIds);
-            List<Candidate> missing = usefulMessages.stream()
-                    .filter(c -> !GroupVectorStore.hash(c.text()).equals(storedHashes.get(c.id())))
-                    .toList();
-            if (!missing.isEmpty()) {
-                var segments = missing.stream().map(c -> TextSegment.from("消息 " + c.id() + "：" + c.text())).toList();
-                var generated = embeddings.embedAll(segments).content().stream().map(e -> e.vector()).toList();
-                vectors.upsert(groupId, embeddingModelName, missing, generated);
+            // Index older visible pages as well, without sending the full chat
+            // history to the embedding endpoint in a single request.
+            for (int offset = 0; offset < usefulMessages.size(); offset += INDEX_BATCH_SIZE) {
+                var batch = usefulMessages.subList(offset,
+                        Math.min(offset + INDEX_BATCH_SIZE, usefulMessages.size()));
+                var ids = batch.stream().map(Candidate::id).toList();
+                Map<Long, String> storedHashes = vectors.hashes(groupId, embeddingModelName, ids);
+                List<Candidate> missing = batch.stream()
+                        .filter(c -> !GroupVectorStore.hash(c.text()).equals(storedHashes.get(c.id())))
+                        .toList();
+                if (!missing.isEmpty()) {
+                    var segments = missing.stream().map(c -> TextSegment.from("消息 " + c.id() + "：" + c.text())).toList();
+                    var generated = embeddings.embedAll(segments).content().stream().map(e -> e.vector()).toList();
+                    vectors.upsert(groupId, embeddingModelName, missing, generated);
+                }
             }
             var retrievedIds = vectors.nearest(groupId, embeddingModelName, eligibleIds,
                     embeddings.embed(question).content().vector());
@@ -134,6 +145,7 @@ public class LocalLangChain4jGroupAgent implements GroupAgentEngine {
             var parsed = GroupAgentAnswerParser.parse(answer, Set.copyOf(retrieved));
             if (parsed.sourceIds().isEmpty()) {
                 parsed = GroupAgentAnswerParser.literalFallback(question, usefulMessages);
+                retrieved.addAll(parsed.sourceIds());
             }
             return new Draft(parsed.answer(), parsed.sourceIds(), List.copyOf(retrieved));
         } catch (ChatException ex) {

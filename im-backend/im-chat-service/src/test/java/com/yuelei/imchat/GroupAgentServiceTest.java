@@ -9,6 +9,7 @@ import com.yuelei.imchat.service.UserAccessClient;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -38,7 +39,7 @@ class GroupAgentServiceTest {
         when(access.requireUser("member")).thenReturn(23L);
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
         var visible = message(43, "周一交付方案");
-        when(groups.history(4, 42, null, 30)).thenReturn(List.of(visible));
+        when(groups.history(4, 42, null, 100)).thenReturn(List.of(visible));
         when(engine.answer(eq(4L), eq("什么时候交付"), anyList()))
                 .thenReturn(new GroupAgentEngine.Draft("建议周一交付。", List.of(43L)));
         when(groups.messageById(4, 43, 42)).thenReturn(visible);
@@ -49,10 +50,31 @@ class GroupAgentServiceTest {
     }
 
     @Test
+    void agentCanCiteAnOlderVisibleMessageAfterMultipleHistoryPages() {
+        when(access.requireUser("member")).thenReturn(23L);
+        when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(0, 0));
+        var newest = new ArrayList<GroupMessage>();
+        for (long id = 136; id >= 37; id--) newest.add(message(id, "消息 " + id));
+        var older = new ArrayList<GroupMessage>();
+        for (long id = 36; id >= 1; id--) older.add(message(id, "消息 " + id));
+        when(groups.history(4, 0, null, 100)).thenReturn(newest);
+        when(groups.history(4, 0, 37L, 100)).thenReturn(older);
+        when(engine.answer(eq(4L), anyString(), anyList()))
+                .thenReturn(new GroupAgentEngine.Draft("决定周五发布。", List.of(5L)));
+        when(groups.messageById(4, 5, 0)).thenReturn(message(5, "消息 5"));
+
+        var result = service.ask("member", 4, "最早的发布决定是什么");
+        assertEquals(List.of(new GroupAgentService.Source(5, "消息 5")), result.sources());
+        verify(groups).history(4, 0, 37L, 100);
+        verify(engine).answer(eq(4L), anyString(), argThat(candidates ->
+                candidates.size() == 136 && candidates.stream().anyMatch(candidate -> candidate.id() == 5L)));
+    }
+
+    @Test
     void revokedOrRejoinedMemberGetsNoResultAfterSlowModelCall() {
         when(access.requireUser("member")).thenReturn(23L);
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42), null);
-        when(groups.history(4, 42, null, 30)).thenReturn(List.of(message(43, "私密内容")));
+        when(groups.history(4, 42, null, 100)).thenReturn(List.of(message(43, "私密内容")));
         when(engine.answer(eq(4L), anyString(), anyList()))
                 .thenReturn(new GroupAgentEngine.Draft("私密内容", List.of(43L)));
         assertThrows(ChatException.class, () -> service.ask("member", 4, "讨论了什么"));
@@ -61,7 +83,7 @@ class GroupAgentServiceTest {
         reset(groups);
         when(groups.membership(4, 23)).thenReturn(
                 new GroupDao.Membership(42, 42), new GroupDao.Membership(50, 50));
-        when(groups.history(4, 42, null, 30)).thenReturn(List.of(message(43, "私密内容")));
+        when(groups.history(4, 42, null, 100)).thenReturn(List.of(message(43, "私密内容")));
         assertThrows(ChatException.class, () -> service.ask("member", 4, "讨论了什么"));
         verify(groups).messageById(4, 43, 50);
     }
@@ -70,7 +92,7 @@ class GroupAgentServiceTest {
     void recalledOrInventedSourcesAreNotReturned() {
         when(access.requireUser("member")).thenReturn(23L);
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
-        when(groups.history(4, 42, null, 30)).thenReturn(List.of(message(43, "需要撤回")));
+        when(groups.history(4, 42, null, 100)).thenReturn(List.of(message(43, "需要撤回")));
         when(engine.answer(eq(4L), anyString(), anyList()))
                 .thenReturn(new GroupAgentEngine.Draft("结论", List.of(43L)));
         assertThrows(ChatException.class, () -> service.ask("member", 4, "讨论了什么"));
@@ -83,7 +105,7 @@ class GroupAgentServiceTest {
     void noEvidenceReturnsNoIrrelevantCitations() {
         when(access.requireUser("member")).thenReturn(23L);
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
-        when(groups.history(4, 42, null, 30)).thenReturn(List.of(message(43, "好的")));
+        when(groups.history(4, 42, null, 100)).thenReturn(List.of(message(43, "好的")));
         when(engine.answer(eq(4L), anyString(), anyList()))
                 .thenReturn(new GroupAgentEngine.Draft(GroupAgentEngine.NO_EVIDENCE, List.of()));
         var result = service.ask("member", 4, "下次会议要做什么");
@@ -96,7 +118,7 @@ class GroupAgentServiceTest {
         when(access.requireUser("member")).thenReturn(23L);
         when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(42, 42));
         var cited = message(43, "周一交设计稿");
-        when(groups.history(4, 42, null, 30)).thenReturn(List.of(cited, message(44, "敏感资料")));
+        when(groups.history(4, 42, null, 100)).thenReturn(List.of(cited, message(44, "敏感资料")));
         when(engine.answer(eq(4L), anyString(), anyList())).thenReturn(
                 new GroupAgentEngine.Draft("周一交设计稿。", List.of(43L), List.of(43L, 44L)));
         when(groups.messageById(4, 43, 42)).thenReturn(cited);

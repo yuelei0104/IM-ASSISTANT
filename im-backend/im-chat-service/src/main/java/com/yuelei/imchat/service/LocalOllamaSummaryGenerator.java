@@ -34,8 +34,11 @@ public class LocalOllamaSummaryGenerator implements SummaryGenerator {
     private final String model;
 
     public LocalOllamaSummaryGenerator(@Value("${im.summary.model:}") String model,
-                                       @Value("${im.summary.port:11434}") int port) {
+                                       @Value("${im.summary.port:11434}") int port,
+                                       @Value("${im.summary.host:127.0.0.1}") String host) {
         if (port < 1 || port > 65535) throw new IllegalArgumentException("本地模型端口无效");
+        if (!host.equals("127.0.0.1") && !host.equals("ollama"))
+            throw new IllegalArgumentException("模型必须连接本机或内部 ollama 服务");
         this.model = model.trim();
         var factory = new SimpleClientHttpRequestFactory() {
             @Override
@@ -48,9 +51,9 @@ public class LocalOllamaSummaryGenerator implements SummaryGenerator {
         factory.setProxy(Proxy.NO_PROXY);
         factory.setConnectTimeout(Duration.ofSeconds(3));
         factory.setReadTimeout(Duration.ofSeconds(120));
-        // No user-configurable host: chat content must never be forwarded to a remote URL.
+        // The only non-loopback host is the private Compose service.
         this.client = RestClient.builder()
-                .baseUrl("http://127.0.0.1:" + port)
+                .baseUrl("http://" + host + ":" + port)
                 .requestFactory(factory).build();
     }
 

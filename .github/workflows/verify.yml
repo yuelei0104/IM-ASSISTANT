@@ -42,3 +42,15 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  release-config:
+    name: Release configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate Compose configuration
+        run: docker compose --env-file im-backend/deploy/.env.example -f im-backend/deploy/compose.yaml config --quiet
+      - name: Validate deployment script
+        run: python3 -m unittest discover -s im-backend/deploy -p 'test_*.py'
+      - name: Build release images
+        run: docker compose --env-file im-backend/deploy/.env.example -f im-backend/deploy/compose.yaml build user chat-a chat-b gateway web

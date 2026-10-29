@@ -16,6 +16,6 @@ spring:
               predicates:
                 - Path=/api/chats/**
             - id: user-http
-              uri: http://127.0.0.1:8081
+              uri: ${IM_USER_SERVICE_URL:http://127.0.0.1:8081}
               predicates:
                 - Path=/api/auth/**,/api/contacts/**

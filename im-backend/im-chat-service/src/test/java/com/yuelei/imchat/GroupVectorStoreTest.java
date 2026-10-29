@@ -7,6 +7,14 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class GroupVectorStoreTest {
     @Test
+    void deploymentHostIsLimitedToLocalOrPrivateService() {
+        assertDoesNotThrow(() -> new GroupVectorStore("jdbc:postgresql://pgvector:5432/im_vectors", "im_vector", "x"));
+        assertDoesNotThrow(() -> new GroupVectorStore("jdbc:postgresql://127.0.0.1:15432/im_vectors", "im_vector", "x"));
+        assertThrows(IllegalArgumentException.class,
+                () -> new GroupVectorStore("jdbc:postgresql://example.com:5432/im_vectors", "im_vector", "x"));
+    }
+
+    @Test
     void hashesOnlyTheAuthorizedTextAndRequiresTheConfiguredEmbeddingDimension() {
         assertEquals(64, GroupVectorStore.hash("会议结论").length());
         assertNotEquals(GroupVectorStore.hash("会议结论"), GroupVectorStore.hash("已撤回"));

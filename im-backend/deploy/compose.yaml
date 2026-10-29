@@ -1,0 +1,238 @@
+name: im-assistant-release
+
+x-chat-env: &chat-env
+  IM_MYSQL_URL: jdbc:mysql://mysql:3306/im_assistant?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+  IM_MYSQL_PASSWORD: ${IM_MYSQL_PASSWORD:?Set IM_MYSQL_PASSWORD}
+  IM_REDIS_HOST: redis
+  IM_REDIS_PORT: 6379
+  IM_USER_SERVICE_URL: http://user:8081
+  IM_PGVECTOR_URL: jdbc:postgresql://pgvector:5432/im_vectors
+  IM_PGVECTOR_PASSWORD: ${IM_PGVECTOR_PASSWORD:?Set IM_PGVECTOR_PASSWORD}
+  IM_OLLAMA_HOST: ollama
+  IM_SUMMARY_MODEL: qwen3:4b
+  IM_AGENT_MODEL: qwen3:4b
+  IM_AGENT_EMBED_MODEL: bge-m3
+  IM_WS_ALLOWED_ORIGINS: http://127.0.0.1:${IM_RELEASE_PORT:-18080},http://localhost:${IM_RELEASE_PORT:-18080}
+  IM_KAFKA_ENABLED: "true"
+  IM_KAFKA_BOOTSTRAP: kafka:9092
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${IM_MYSQL_ROOT_PASSWORD:?Set IM_MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: im_assistant
+      MYSQL_USER: im_user
+      MYSQL_PASSWORD: ${IM_MYSQL_PASSWORD:?Set IM_MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  pgvector:
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: im_vectors
+      POSTGRES_USER: im_vector
+      POSTGRES_PASSWORD: ${IM_PGVECTOR_PASSWORD:?Set IM_PGVECTOR_PASSWORD}
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+      - ../pgvector/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U im_vector -d im_vectors"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  kafka-volume-init:
+    image: apache/kafka:4.1.1
+    user: "0"
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R 1000:1000 /tmp/kraft-combined-logs"]
+    volumes:
+      - kafka_data:/tmp/kraft-combined-logs
+
+  kafka:
+    image: apache/kafka:4.1.1
+    restart: unless-stopped
+    depends_on:
+      kafka-volume-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+    volumes:
+      - kafka_data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  kafka-init:
+    image: apache/kafka:4.1.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/opt/kafka/bin/kafka-topics.sh"]
+    command: ["--bootstrap-server", "kafka:9092", "--create", "--if-not-exists", "--topic", "im.chat.notifications.v1", "--partitions", "6", "--replication-factor", "1"]
+
+  ollama:
+    image: ollama/ollama:0.40.12
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  user:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: user
+      args:
+        MAVEN_MIRROR_URL: ${IM_MAVEN_MIRROR_URL:-https://repo.maven.apache.org/maven2}
+    restart: unless-stopped
+    environment:
+      IM_MYSQL_URL: jdbc:mysql://mysql:3306/im_assistant?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+      IM_MYSQL_PASSWORD: ${IM_MYSQL_PASSWORD:?Set IM_MYSQL_PASSWORD}
+      IM_REDIS_HOST: redis
+      IM_REDIS_PORT: 6379
+      IM_AUTH_DEVMODE: ${IM_LOCAL_TEST_CODES:-false}
+      IM_SMTP_HOST: ${IM_SMTP_HOST:-}
+      IM_SMTP_PORT: ${IM_SMTP_PORT:-587}
+      IM_SMTP_USERNAME: ${IM_SMTP_USERNAME:-}
+      IM_SMTP_PASSWORD: ${IM_SMTP_PASSWORD:-}
+      IM_SMTP_FROM: ${IM_SMTP_FROM:-}
+      MANAGEMENT_HEALTH_MAIL_ENABLED: "false"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/app/health", "HealthProbe", "8081"]
+      interval: 10s
+      timeout: 6s
+      retries: 18
+
+  chat-a:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: chat
+      args:
+        MAVEN_MIRROR_URL: ${IM_MAVEN_MIRROR_URL:-https://repo.maven.apache.org/maven2}
+    restart: unless-stopped
+    environment: *chat-env
+    depends_on:
+      user:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/app/health", "HealthProbe", "8082"]
+      interval: 10s
+      timeout: 6s
+      retries: 18
+
+  chat-b:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: chat
+      args:
+        MAVEN_MIRROR_URL: ${IM_MAVEN_MIRROR_URL:-https://repo.maven.apache.org/maven2}
+    restart: unless-stopped
+    environment: *chat-env
+    depends_on:
+      chat-a:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/app/health", "HealthProbe", "8082"]
+      interval: 10s
+      timeout: 6s
+      retries: 18
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: gateway
+      args:
+        MAVEN_MIRROR_URL: ${IM_MAVEN_MIRROR_URL:-https://repo.maven.apache.org/maven2}
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: cluster
+      SERVER_ADDRESS: 0.0.0.0
+      IM_USER_SERVICE_URL: http://user:8081
+      IM_CHAT_NODE_A_URL: http://chat-a:8082
+      IM_CHAT_NODE_B_URL: http://chat-b:8082
+    depends_on:
+      chat-a:
+        condition: service_healthy
+      chat-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "java", "-cp", "/app/health", "HealthProbe", "8080"]
+      interval: 10s
+      timeout: 6s
+      retries: 18
+
+  web:
+    build:
+      context: ../../im-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${IM_RELEASE_PORT:-18080}:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql_data:
+  redis_data:
+  pgvector_data:
+  kafka_data:
+  ollama_data:

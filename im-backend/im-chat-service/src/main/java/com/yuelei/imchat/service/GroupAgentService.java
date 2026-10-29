@@ -5,11 +5,14 @@ import com.yuelei.imchat.exception.ChatException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 
 @Service
 public class GroupAgentService {
+    private static final int HISTORY_PAGE_SIZE = 100;
     private final GroupDao groups;
     private final UserAccessClient access;
     private final GroupAgentEngine engine;
@@ -31,14 +34,23 @@ public class GroupAgentService {
             throw new ChatException(HttpStatus.BAD_REQUEST, "问题应为 2 到 300 个字符");
         var membership = groups.membership(groupId, userId);
         if (membership == null) throw new ChatException(HttpStatus.FORBIDDEN, "无权访问此讨论室");
-        // Only the caller's last 30 visible, non-recalled messages enter the model.
-        var candidates = groups.history(groupId, membership.joinedAfterId(), null, 30).stream()
-                .filter(m -> m.recalledAt() == null && !m.body().isBlank())
-                .map(m -> new GroupAgentEngine.Candidate(m.id(),
-                        m.body().substring(0, Math.min(m.body().length(), 500))))
-                .toList();
+        // Walk the entire membership-visible history in indexed pages. Page size
+        // bounds each DB read; it is not a limit on which messages can be found.
+        var candidates = new ArrayList<GroupAgentEngine.Candidate>();
+        Long beforeId = null;
+        while (true) {
+            var page = groups.history(groupId, membership.joinedAfterId(), beforeId, HISTORY_PAGE_SIZE);
+            for (var message : page) {
+                if (message.recalledAt() == null && !message.body().isBlank()) {
+                    candidates.add(new GroupAgentEngine.Candidate(message.id(),
+                            message.body().substring(0, Math.min(message.body().length(), 500))));
+                }
+            }
+            if (page.size() < HISTORY_PAGE_SIZE) break;
+            beforeId = page.get(page.size() - 1).id();
+        }
         if (candidates.isEmpty()) throw new ChatException(HttpStatus.BAD_REQUEST, "群内还没有可检索的消息");
-        GroupAgentEngine.Draft draft = engine.answer(groupId, question, candidates);
+        GroupAgentEngine.Draft draft = engine.answer(groupId, question, List.copyOf(candidates));
         if (draft == null || draft.answer() == null || draft.answer().isBlank()
                 || draft.answer().length() > 2000 || draft.sourceIds() == null
                 || draft.contextIds() == null)
@@ -51,11 +63,13 @@ public class GroupAgentService {
         if (draft.sourceIds().isEmpty())
             return new Answer(GroupAgentEngine.NO_EVIDENCE, List.of());
         var visibleNow = new LinkedHashMap<Long, Source>();
+        var eligibleIds = new HashSet<Long>();
+        for (var candidate : candidates) eligibleIds.add(candidate.id());
         // Check every message that entered the prompt or a tool result, even if
         // the model ultimately cites fewer. Recall/rejoin must invalidate the answer.
         for (Long id : draft.contextIds()) {
             if (id == null || visibleNow.containsKey(id)) continue;
-            if (candidates.stream().noneMatch(candidate -> candidate.id() == id))
+            if (!eligibleIds.contains(id))
                 throw new ChatException(HttpStatus.BAD_GATEWAY, "Agent 引用了无效的消息");
             var message = groups.messageById(groupId, id, current.joinedAfterId());
             if (message == null || message.recalledAt() != null)
