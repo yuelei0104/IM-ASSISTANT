@@ -526,8 +526,10 @@ The query filters rows to the caller's authorized message IDs, then ranks each
 message by the smallest cosine distance across its chunks. Below
 `IM_PGVECTOR_ANN_MIN_IDS` (default 1200) authorized messages this ranking is
 exact. Above it the service may use the HNSW index with iterative scan, and it
-falls back to exact scoring whenever the approximate scan returns a short list,
-so an index can never silently hide an authorized message. MySQL source
+falls back to exact scoring if the approximate scan returns fewer distinct
+messages than requested. HNSW is approximate: a full result list can still
+omit a closer authorized message. Compare ANN with exact scoring on representative
+questions before claiming recall quality at larger group sizes. MySQL source
 visibility is checked again before returning an answer.
 LangChain4j's AI Service then generates the answer. Two read-only `@Tool`
 methods work on that same authorized snapshot: one inspects a message by ID, the
