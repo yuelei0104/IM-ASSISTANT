@@ -2,6 +2,7 @@ package com.yuelei.imchat.service;
 
 import com.yuelei.imchat.dao.GroupDao;
 import com.yuelei.imchat.exception.ChatException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -16,11 +17,15 @@ public class GroupAgentService {
     private final GroupDao groups;
     private final UserAccessClient access;
     private final GroupAgentEngine engine;
+    private final int messageCharLimit;
 
-    public GroupAgentService(GroupDao groups, UserAccessClient access, GroupAgentEngine engine) {
+    public GroupAgentService(GroupDao groups, UserAccessClient access, GroupAgentEngine engine,
+                             @Value("${im.agent.message-char-limit:1200}") int messageCharLimit) {
+        if (messageCharLimit < 200) throw new IllegalArgumentException("消息截断长度不能小于 200");
         this.groups = groups;
         this.access = access;
         this.engine = engine;
+        this.messageCharLimit = messageCharLimit;
     }
 
     public record Source(long id, String body) { }
@@ -43,7 +48,7 @@ public class GroupAgentService {
             for (var message : page) {
                 if (message.recalledAt() == null && !message.body().isBlank()) {
                     candidates.add(new GroupAgentEngine.Candidate(message.id(),
-                            message.body().substring(0, Math.min(message.body().length(), 500))));
+                            message.body().substring(0, Math.min(message.body().length(), messageCharLimit))));
                 }
             }
             if (page.size() < HISTORY_PAGE_SIZE) break;

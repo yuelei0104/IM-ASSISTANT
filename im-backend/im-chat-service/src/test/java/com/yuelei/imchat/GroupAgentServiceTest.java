@@ -20,7 +20,7 @@ class GroupAgentServiceTest {
     private final GroupDao groups = mock(GroupDao.class);
     private final UserAccessClient access = mock(UserAccessClient.class);
     private final GroupAgentEngine engine = mock(GroupAgentEngine.class);
-    private final GroupAgentService service = new GroupAgentService(groups, access, engine);
+    private final GroupAgentService service = new GroupAgentService(groups, access, engine, 1200);
 
     private static GroupMessage message(long id, String body) {
         return new GroupMessage(id, 4, 9, "m" + id, body, "TEXT", LocalDateTime.now());
@@ -68,6 +68,22 @@ class GroupAgentServiceTest {
         verify(groups).history(4, 0, 37L, 100);
         verify(engine).answer(eq(4L), anyString(), argThat(candidates ->
                 candidates.size() == 136 && candidates.stream().anyMatch(candidate -> candidate.id() == 5L)));
+    }
+
+    @Test
+    void longMessageIsTruncatedAtTheConfiguredLimitBeforeEmbedding() {
+        var narrow = new GroupAgentService(groups, access, engine, 200);
+        when(access.requireUser("member")).thenReturn(23L);
+        when(groups.membership(4, 23)).thenReturn(new GroupDao.Membership(0, 0));
+        String body = "长".repeat(600);
+        when(groups.history(4, 0, null, 100)).thenReturn(List.of(message(50, body)));
+        when(engine.answer(eq(4L), anyString(), anyList()))
+                .thenReturn(new GroupAgentEngine.Draft("没问题。", List.of(50L)));
+        when(groups.messageById(4, 50, 0)).thenReturn(message(50, body));
+
+        narrow.ask("member", 4, "结论是什么");
+        verify(engine).answer(eq(4L), anyString(), argThat(candidates ->
+                candidates.size() == 1 && candidates.get(0).text().length() == 200));
     }
 
     @Test

@@ -90,6 +90,12 @@ For backend applications running directly on Windows, use MySQL at
 `127.0.0.1:16380`, plus pgvector at `127.0.0.1:15432` (database `im_vectors`,
 user `im_vector`). Database users/passwords are initialized only when their
 named volumes are first created; changing `.env` later does not change them.
+A pgvector volume created before chunked indexing keeps the old single-vector
+schema; apply the upgrade once, or the Agent will log failed inserts:
+
+```powershell
+Get-Content .\pgvector\migrate-chunking.sql | docker compose exec -T pgvector psql -U im_vector -d im_vectors
+```
 
 ### Local meeting demo data
 
@@ -493,27 +499,40 @@ knowledge base. `POST /api/chats/groups/{groupId}/agent/ask` accepts
 `{"question":"下次会议需要准备什么？"}` and returns an answer plus the group
 message IDs and text used as checkable sources. The endpoint requires the
 caller's existing bearer session and group membership. It walks all messages
-newer than that member's join cursor in pages of 100, excludes recalled
-messages, and truncates each indexed input to 500 characters. There is no
-fixed limit on the history searched: embedding is batched in groups of 32,
-and only the three most relevant messages enter the model prompt. The first
-question over a large group may take longer while its history is indexed.
+newer than that member's join cursor in pages of 100 and excludes recalled
+messages. Nothing limits which history can be found, but only a few messages
+enter the prompt: the service ranks a pool three times wider than the prompt and
+keeps `IM_AGENT_TOP_K` messages (default 8), dropping any that score clearly
+below the best hit. Every kept hit also brings the message before and after it,
+so a short reply keeps the question it answered. If the first round produces no
+citation, one wider round retries with the whole pool before the service answers
+insufficient evidence. The first question over a large group may take longer
+while its history is indexed.
 It rechecks membership, join cursor
 and live source visibility **after** inference. The response is not stored and
 uses `Cache-Control: no-store`.
 
 LangChain4j embeds the permitted messages and question using a local Ollama
 embedding model with 1024 dimensions (`qwen3-embedding:0.6b` for the development
-stack, `bge-m3` for the release stack). PostgreSQL with pgvector persists each eligible
-message's embedding and SHA-256 content hash, keyed by group, message and model;
-it stores no group message text. A later question reuses unchanged embeddings.
-The query filters rows to the caller's authorized message IDs, then pgvector
-ranks them by cosine distance and returns the top three IDs. MySQL source
-visibility is checked again before returning an answer. The index uses exact
-ranking over the authorized set rather than global ANN search.
-LangChain4j's AI Service then generates the answer. A
-single `@Tool` allows the model to inspect a message from that same authorized
-snapshot by ID. The tool has no write operations or access to other groups.
+stack, `bge-m3` for the release stack). PostgreSQL with pgvector persists each
+chunk's embedding plus the message's SHA-256 content hash, keyed by group,
+message, model and chunk number; it stores no group message text. A message
+longer than 300 characters is split into overlapping 300-character windows, so
+one long message cannot blur every topic it mentions into a single vector; the
+prompt still shows at most 400 characters per message. A later question reuses
+unchanged chunks. `IM_AGENT_MESSAGE_CHARS` (default 1200) caps how much of a
+single message is indexed at all.
+The query filters rows to the caller's authorized message IDs, then ranks each
+message by the smallest cosine distance across its chunks. Below
+`IM_PGVECTOR_ANN_MIN_IDS` (default 1200) authorized messages this ranking is
+exact. Above it the service may use the HNSW index with iterative scan, and it
+falls back to exact scoring whenever the approximate scan returns a short list,
+so an index can never silently hide an authorized message. MySQL source
+visibility is checked again before returning an answer.
+LangChain4j's AI Service then generates the answer. Two read-only `@Tool`
+methods work on that same authorized snapshot: one inspects a message by ID, the
+other searches it by keyword, which lets the model reach past the vector hits
+without ever querying another group or a database. Neither tool can write.
 Short acknowledgements are skipped; the response is limited to a concise answer
 and only the IDs the model cites from the authorized context. If the context
 does not answer the question, it returns a fixed insufficient-evidence answer

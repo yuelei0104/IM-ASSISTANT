@@ -8,10 +8,14 @@ import static org.junit.jupiter.api.Assertions.*;
 class GroupVectorStoreTest {
     @Test
     void deploymentHostIsLimitedToLocalOrPrivateService() {
-        assertDoesNotThrow(() -> new GroupVectorStore("jdbc:postgresql://pgvector:5432/im_vectors", "im_vector", "x"));
-        assertDoesNotThrow(() -> new GroupVectorStore("jdbc:postgresql://127.0.0.1:15432/im_vectors", "im_vector", "x"));
+        assertDoesNotThrow(() -> new GroupVectorStore("jdbc:postgresql://pgvector:5432/im_vectors", "im_vector", "x", 1200, 200));
+        assertDoesNotThrow(() -> new GroupVectorStore("jdbc:postgresql://127.0.0.1:15432/im_vectors", "im_vector", "x", 1200, 200));
         assertThrows(IllegalArgumentException.class,
-                () -> new GroupVectorStore("jdbc:postgresql://example.com:5432/im_vectors", "im_vector", "x"));
+                () -> new GroupVectorStore("jdbc:postgresql://example.com:5432/im_vectors", "im_vector", "x", 1200, 200));
+        assertThrows(IllegalArgumentException.class,
+                () -> new GroupVectorStore("jdbc:postgresql://127.0.0.1:15432/im_vectors", "im_vector", "x", -1, 200));
+        assertThrows(IllegalArgumentException.class,
+                () -> new GroupVectorStore("jdbc:postgresql://127.0.0.1:15432/im_vectors", "im_vector", "x", 1200, 0));
     }
 
     @Test
