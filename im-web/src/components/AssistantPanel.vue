@@ -42,32 +42,24 @@ const { items: groupSummaries, evidenceFor: summaryEvidenceFor,
       <div>
         <div class="assistant-brand">
           <span class="assistant-mark"><AppIcon name="sparkles" :size="17" /></span
-          ><strong>接上讨论</strong><span class="beta">演示</span>
+          ><strong>{{ isGroup ? "群聊助手" : "接上讨论" }}</strong>
         </div>
-        <p>从消息里理清思路，接住下一步。</p>
+        <p>{{ isGroup ? "问一问这段讨论，答案会标出处。" : "从消息里理清思路，接住下一步。" }}</p>
       </div>
       <button class="icon-button close-assistant" aria-label="关闭助手" @click="emit('close')">
         <AppIcon name="x" />
       </button>
     </div>
     <div class="assistant-scroll">
-      <div class="assist-hero">
-        <span class="assist-hero-icon"><AppIcon name="sparkles" :size="23" /></span>
-        <p>让重要的事<br /><strong>自然浮现。</strong></p>
-        <small>选择会话，整理讨论中的线索。</small>
-      </div>
       <div class="assist-section">
         <div class="assist-label">
-          <AppIcon name="alignLeft" :size="17" /><strong>对话摘要</strong>
+          <AppIcon name="alignLeft" :size="17" /><strong>{{
+            isGroup ? "问一问这段讨论" : "讨论线索"
+          }}</strong>
         </div>
         <template v-if="isGroup">
           <div class="agent-ask">
-            <div class="assist-label">
-              <AppIcon name="sparkles" :size="17" /><strong>群聊 Agent 问答</strong>
-            </div>
-            <p class="assist-description">
-              检索你有权查看的讨论室历史消息；本地模型生成回答，可核对引用。不会自动创建待办。
-            </p>
+            <p class="assist-description">只基于你有权查看的消息作答，答案会标注原消息。</p>
             <label for="agent-question">向当前讨论室提问</label>
             <input
               id="agent-question"
@@ -85,6 +77,10 @@ const { items: groupSummaries, evidenceFor: summaryEvidenceFor,
             >
               {{ agentBusy ? "检索并回答中…" : "提问" }}
             </button>
+            <p v-if="agentBusy" class="assist-hint">正在检索讨论室历史，请稍候。</p>
+            <p v-else-if="agentQuestion.trim().length < 2" class="assist-hint">
+              输入至少 2 个字即可提问
+            </p>
             <p v-if="agentError" class="error-text" role="alert">{{ agentError }}</p>
             <div v-if="agentAnswer" class="summary-card">
               <p class="group-summary-text">{{ agentAnswer.answer }}</p>
@@ -100,15 +96,21 @@ const { items: groupSummaries, evidenceFor: summaryEvidenceFor,
               </div>
             </div>
           </div>
-          <p class="assist-description">
-            只使用加入后可见的群消息，由本机模型生成；摘要仅对有权查看这些消息的群成员开放。
-          </p>
-          <button class="soft-button" type="button" :disabled="summaryBusy" @click="createGroupSummary">
-            <AppIcon name="sparkles" :size="15" /> {{ summaryBusy ? "处理中…" : "生成群聊摘要" }}
-          </button>
-          <button class="text-button" type="button" :disabled="summaryBusy" @click="loadGroupSummaries">
-            查看群内摘要
-          </button>
+          <div class="assist-subsection">
+            <strong class="assist-subtitle">群聊摘要</strong>
+            <p class="assist-description">汇总你加入之后的消息，仅群成员可见。</p>
+            <button
+              class="soft-button"
+              type="button"
+              :disabled="summaryBusy"
+              @click="createGroupSummary"
+            >
+              <AppIcon name="sparkles" :size="15" /> {{ summaryBusy ? "处理中…" : "生成摘要" }}
+            </button>
+            <button class="text-button" type="button" :disabled="summaryBusy" @click="loadGroupSummaries">
+              查看历史摘要
+            </button>
+          </div>
           <p v-if="summaryError" class="error-text" role="alert">{{ summaryError }}</p>
           <div v-if="showSummary" class="summary-card">
             <p v-if="!groupSummaries.length">本群暂无你有权查看的摘要。</p>
@@ -150,7 +152,7 @@ const { items: groupSummaries, evidenceFor: summaryEvidenceFor,
           </div>
         </template>
         <template v-else>
-          <p class="assist-description">私聊仅展示本地演示消息线索；群聊摘要由本机模型生成。</p>
+          <p class="assist-description">从当前对话里挑出值得回看的发言，点一下回到原消息。</p>
           <div class="segmented">
             <button
               :class="{ active: range === 'recent' }"
@@ -210,14 +212,15 @@ const { items: groupSummaries, evidenceFor: summaryEvidenceFor,
         <div class="assist-label">
           <AppIcon name="target" :size="17" /><strong>关注词</strong>
         </div>
-        <p>当前会话有 <strong>{{ focusCount }}</strong> 条消息提到关注词。</p>
+        <p v-if="focusCount">{{ focusCount }} 条消息命中关注词。</p>
+        <p v-else>还没有消息命中关注词。</p>
         <button @click="emit('manageFocusWords')">
           管理关注词 <AppIcon name="arrowRight" :size="14" />
         </button>
       </div>
     </div>
     <div class="assistant-footer">
-      <span class="status-dot" /> 群聊摘要仅群成员可见 · 群消息本机翻译需手动确认
+      <span class="status-dot" /> 摘要仅群成员可见 · 翻译由你确认后再发送
     </div>
   </aside>
 </template>

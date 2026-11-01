@@ -70,6 +70,7 @@ const emit = defineEmits<{
           </span>
         </div>
         <p v-if="active.ownerId !== 'me'" class="drawer-hint">仅群主可邀请自己的好友。</p>
+        <p v-else class="drawer-hint">你是群主。想离开讨论室，请先把群主转让给其他成员。</p>
         <button
           v-if="active.ownerId !== 'me'"
           class="text-button drawer-leave"

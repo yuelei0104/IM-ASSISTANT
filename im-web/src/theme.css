@@ -112,7 +112,6 @@ select:focus-visible {
 .page-subtitle {
   color: var(--text-muted);
 }
-.unread-badge,
 .primary-button,
 .send-button {
   background: var(--brand);

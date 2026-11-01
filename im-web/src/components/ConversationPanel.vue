@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import AppIcon from "./AppIcon.vue";
 import type { Conversation, Message } from "../demo";
 
@@ -17,8 +18,14 @@ const search = defineModel<string>("search", { required: true });
 const emit = defineEmits<{
   open: [id: string];
   createGroup: [];
+  addFriend: [];
   loadMoreGroups: [];
 }>();
+
+/** The header pill is an unread count, not a conversation count. */
+const unreadTotal = computed(() =>
+  props.conversations.reduce((sum, item) => sum + (item.unread || 0), 0),
+);
 
 function preview(id: string) {
   return id === props.activeId ? props.activePreview : null;
@@ -28,8 +35,16 @@ function time(c: Conversation) {
   return preview(c.id)?.time || "刚刚";
 }
 
+/**
+ * Only the open conversation has a cached preview, so rows fall back to a fact that is
+ * always true for that row instead of claiming the conversation is empty.
+ */
 function text(c: Conversation) {
-  return preview(c.id)?.text || "开始一段对话";
+  const last = preview(c.id);
+  if (last) return last.text;
+  if (c.kind === "group")
+    return c.memberIds.length > 1 ? `${c.memberIds.length} 位成员` : "讨论室";
+  return "私聊";
 }
 
 function speakerPrefix(c: Conversation) {
@@ -49,7 +64,7 @@ function unreadLabel(c: Conversation) {
         <p class="overline">WORKSPACE</p>
         <h1>
           消息
-          <span class="count-pill">{{ totalCount }}</span>
+          <span v-if="unreadTotal" class="count-pill">{{ unreadTotal }}</span>
         </h1>
       </div>
       <button
@@ -76,7 +91,7 @@ function unreadLabel(c: Conversation) {
       </button>
     </div>
     <div class="section-label">
-      <span>最近会话</span><span>{{ conversations.length }}</span>
+      <span>最近会话</span><span v-if="search">{{ conversations.length }}</span>
     </div>
     <div class="conversation-scroll">
       <button
@@ -102,7 +117,22 @@ function unreadLabel(c: Conversation) {
       <button v-if="hasMoreGroups" class="load-more" @click="emit('loadMoreGroups')">
         加载更多讨论室
       </button>
-      <div v-if="!conversations.length" class="empty-list">没有找到相关会话</div>
+      <div v-if="!conversations.length" class="empty-list">
+        <template v-if="search">
+          <strong>没有找到相关会话</strong>
+          <p>换个关键词，或清空筛选查看全部会话。</p>
+        </template>
+        <template v-else>
+          <strong>还没有会话</strong>
+          <p>先添加好友开始聊天，或者直接创建一个讨论室。</p>
+          <div class="empty-actions">
+            <button class="primary-button" type="button" @click="emit('addFriend')">添加好友</button>
+            <button class="outline-button" type="button" @click="emit('createGroup')">
+              创建讨论室
+            </button>
+          </div>
+        </template>
+      </div>
     </div>
     <div class="sidebar-bottom">
       <div class="sidebar-help">
@@ -112,7 +142,7 @@ function unreadLabel(c: Conversation) {
           <p>从对话中发现下一步</p>
         </div>
       </div>
-      <span class="demo-chip"><span class="status-dot" />好友私聊与讨论室已接入</span>
+      <span class="demo-chip"><span class="status-dot" />消息已同步</span>
     </div>
   </aside>
 </template>

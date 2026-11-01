@@ -19,6 +19,9 @@ const {
   hints: codeHints, codeBusy, secondsLeft: waitSeconds,
   switchMode: switchAuthMode, editRegistration, requestCode, submit: submitAuth,
 } = props.auth;
+
+/** Development-only copy: a production build should not explain the local code preview. */
+const devHints = import.meta.env.DEV;
 </script>
 
 <template>
@@ -38,11 +41,11 @@ const {
         <h1>聊得清楚，<br />事情也更有着落。</h1>
         <p>把重要对话、好友协作与下一步计划，放在同一个舒适的空间。</p>
       </div>
-      <small>IM ASSISTANT · FRONTEND PREVIEW</small>
+      <small>IM ASSISTANT</small>
     </div>
     <div class="auth-form-wrap">
       <form class="auth-card" @submit.prevent="submitAuth">
-        <span class="eyebrow-chip">账号已接入用户服务</span>
+        <span class="eyebrow-chip">安全登录</span>
         <h2>
           {{
             authMode === "login"
@@ -375,8 +378,8 @@ const {
         >
           {{ authMode === "login" ? "还没有账号？先注册" : "已经有账号？去登录" }}
         </button>
-        <p class="auth-disclaimer">
-          本地测试模式启用后会自动填入验证码，不发送短信或邮件。正式使用需配置实际验证服务。
+        <p v-if="devHints" class="auth-disclaimer">
+          本机测试模式：验证码会直接填入，不会发送短信或邮件。
         </p>
       </form>
     </div>

@@ -727,6 +727,7 @@ const transcript = {
         :has-more-groups="Boolean(groupsNextCursor)"
         @open="openChat"
         @create-group="openModal('group')"
+        @add-friend="openModal('friend')"
         @load-more-groups="loadMoreGroups"
       />
       <main
@@ -786,7 +787,11 @@ const transcript = {
           @send="send"
         />
       </main>
-      <AssistantPanel
+      <section v-else class="chat-placeholder">
+        <strong>选择一个会话</strong>
+        <p>从左侧打开好友或讨论室，或者创建一个新的讨论室。</p>
+      </section>
+      <AssistantPanel v-if="active"
         v-model:show-summary="showSummary"
         v-model:range="range"
         v-model:task-draft="taskDraft"
@@ -875,7 +880,11 @@ const transcript = {
         @reset-demo="reset"
       />
     </main>
-    <nav v-if="page !== 'chat'" class="mobile-nav" aria-label="移动端导航">
+    <nav
+      v-if="page !== 'chat' || !mobileChatOpen"
+      class="mobile-nav"
+      aria-label="移动端导航"
+    >
       <button
         v-for="n in nav"
         :key="n.id"

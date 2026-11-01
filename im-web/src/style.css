@@ -270,6 +270,26 @@ svg {
   flex: 1;
   min-width: 0;
 }
+.chat-placeholder {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  padding: 30px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--surface-app);
+}
+.chat-placeholder strong {
+  color: var(--text-strong);
+  font-size: 14px;
+}
+.chat-placeholder p {
+  margin: 0;
+  line-height: 1.7;
+}
 .conversation-panel {
   width: 322px;
   min-width: 290px;
@@ -713,7 +733,7 @@ svg {
   border: 1px solid #cddde6; border-radius: 7px; resize: vertical; font: inherit; }
 .translation-preview-actions { display: flex; gap: 9px; margin-top: 7px; }
 .translation-preview-actions button { border: 1px solid #cddde6; border-radius: 7px;
-  background: white; padding: 5px 9px; color: #287a86; cursor: pointer; }
+  background: white; padding: 5px 9px; color: #1d7a80; cursor: pointer; }
 .translation-preview-actions button:disabled { opacity: .55; cursor: not-allowed; }
 .delivery {
   text-align: right;
@@ -816,7 +836,7 @@ svg {
 .caption-button {
   display: inline-flex;
   gap: 4px;
-  color: #287a86;
+  color: #1d7a80;
   font-size: 11px;
   font-weight: 600;
 }
@@ -875,7 +895,7 @@ svg {
   border-radius: 7px;
   background: white;
   padding: 5px 9px;
-  color: #287a86;
+  color: #1d7a80;
 }
 .voice-interim button:disabled { opacity: .55; cursor: not-allowed; }
 .recording-dot {
@@ -966,7 +986,7 @@ svg {
   width: 31px;
   height: 31px;
   border-radius: 9px;
-  color: #29969a;
+  color: #1d7a80;
   background: #fff;
   display: grid;
   place-items: center;
@@ -1024,6 +1044,21 @@ svg {
   font-size: 11px;
   line-height: 1.7;
   margin: 11px 0 15px;
+}
+.assist-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
+.assist-subsection {
+  display: grid;
+  gap: 2px;
+  padding-top: 20px;
+}
+.assist-subtitle {
+  font-size: 12px;
+  color: var(--text-strong);
 }
 .segmented {
   display: flex;
@@ -1168,7 +1203,7 @@ svg {
   font-size: 13px;
 }
 .primary-button {
-  background: #238f96;
+  background: #1d7a80;
   border: 0;
   color: #fff;
   border-radius: 9px;
@@ -1222,7 +1257,7 @@ svg {
   font-size: 30px;
   letter-spacing: -1px;
   margin: 5px 0;
-  color: #258e94;
+  color: #1d7a80;
 }
 .stat-card small {
   font-size: 11px;
@@ -1842,7 +1877,7 @@ svg {
   margin-left: 4px;
 }
 .invite-person input {
-  accent-color: #238f96;
+  accent-color: #1d7a80;
 }
 .modal-submit {
   margin-top: 22px;
@@ -1871,6 +1906,27 @@ svg {
   padding: 20px;
   color: var(--text-muted);
   text-align: center;
+  font-size: 12px;
+}
+.empty-list strong {
+  display: block;
+  color: var(--text-strong);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.empty-list p {
+  margin: 0 0 14px;
+  line-height: 1.7;
+}
+.empty-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+.empty-actions .primary-button,
+.empty-actions .outline-button {
+  width: auto;
+  padding: 8px 14px;
   font-size: 12px;
 }
 .auth-shell {
@@ -2035,7 +2091,7 @@ svg {
 }
 .auth-tabs button.active {
   background: #fff;
-  color: #238f96;
+  color: #1d7a80;
   font-weight: 700;
   box-shadow: 0 2px 8px #213f4714;
 }
@@ -2054,8 +2110,8 @@ svg {
   font-size: 12px;
 }
 .login-method button.active {
-  border-bottom-color: #238f96;
-  color: #238f96;
+  border-bottom-color: #1d7a80;
+  color: #1d7a80;
   font-weight: 700;
 }
 .verification-field {
@@ -2132,7 +2188,7 @@ svg {
   display: block;
   border: 0;
   background: transparent;
-  color: #258e94;
+  color: #1d7a80;
   font-size: 12px;
   margin: 15px auto 0;
 }
@@ -2140,7 +2196,7 @@ svg {
   display: block;
   border: 0;
   background: none;
-  color: #258e94;
+  color: #1d7a80;
   font-size: 12px;
   margin: 21px auto;
 }
@@ -2202,7 +2258,7 @@ svg {
     min-height: 0;
   }
   .rail {
-    width: 57px;
+    display: none;
   }
   .rail-logo {
     margin: 20px 0 28px;
@@ -2217,12 +2273,13 @@ svg {
     left: -9px;
   }
   .conversation-panel {
-    width: calc(100vw - 57px);
+    width: 100vw;
     min-width: 0;
+    padding-bottom: 62px;
   }
   .chat-main {
     position: fixed;
-    inset: 0 0 0 57px;
+    inset: 0;
     z-index: 4;
     transform: translateX(110%);
     transition: transform 0.2s;
@@ -2283,6 +2340,33 @@ svg {
     width: 160px;
   }
   .mobile-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 7;
+    background: #fff;
+    border-top: 1px solid #eaeaed;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .mobile-nav button {
+    flex: 1;
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 3px;
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+    font-size: 10px;
+    padding: 7px 0 6px;
+  }
+  .mobile-nav button.active {
+    color: var(--brand);
+  }
+  .sidebar-help,
+  .demo-chip {
     display: none;
   }
   .auth-shell {
@@ -2314,20 +2398,11 @@ svg {
   }
 }
 @media (max-width: 440px) {
-  .rail {
-    width: 50px;
-  }
   .rail-link {
     width: 36px;
   }
   .rail-link.active:before {
     left: -7px;
-  }
-  .conversation-panel {
-    width: calc(100vw - 50px);
-  }
-  .chat-main {
-    left: 50px;
   }
   .header-avatar {
     display: none;
@@ -2373,7 +2448,7 @@ svg {
 }
 .unread-divider {
   text-align: center;
-  color: #29969a;
+  color: #1d7a80;
   font-size: 11px;
   margin: 22px 0;
   display: flex;

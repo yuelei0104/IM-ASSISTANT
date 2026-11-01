@@ -132,7 +132,7 @@ function senderName(m: ContextMessage) {
   </section>
   <div class="chat-notice">
     <AppIcon name="shield" :size="15" />
-    消息已保存；在线时实时推送，断线后自动补拉。群消息可请求本机翻译并核对后发送。
+    消息会自动同步；换设备登录后，历史记录仍然在。
   </div>
   <div v-if="contextActive" class="context-banner">
     <span>正在查看搜索结果附近的消息 · 新消息仍会在后台同步</span>
