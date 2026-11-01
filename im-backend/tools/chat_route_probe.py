@@ -50,15 +50,15 @@ def main():
     parser.add_argument("--node-a-url", type=loopback_url, default="http://127.0.0.1:8082")
     parser.add_argument("--node-b-url", type=loopback_url, default="http://127.0.0.1:8083")
     args = parser.parse_args()
-    ports = {8082, 8083}
-    check({int(args.node_a_url.rsplit(":", 1)[1]), int(args.node_b_url.rsplit(":", 1)[1])} == ports,
-          "route probe currently checks local chat ports 8082 and 8083")
+    port_a = int(args.node_a_url.rsplit(":", 1)[1])
+    port_b = int(args.node_b_url.rsplit(":", 1)[1])
+    check(port_a != port_b, "node-a and node-b must use different ports")
     user_id, _, token = new_account(args.user_url, "r")
     with ChatSocket(args.node_a_url, token):
-        wait_routes(user_id, {8082}, "first connection")
+        wait_routes(user_id, {port_a}, "first connection")
         with ChatSocket(args.node_b_url, token):
-            wait_routes(user_id, ports, "both nodes connected")
-        wait_routes(user_id, {8082}, "second node disconnected")
+            wait_routes(user_id, {port_a, port_b}, "both nodes connected")
+        wait_routes(user_id, {port_a}, "second node disconnected")
     wait_routes(user_id, set(), "all sockets disconnected")
     print("PASS: one user routes to both nodes; closing each socket removes only its own lease")
     print("One disposable account remains in the local development database.")

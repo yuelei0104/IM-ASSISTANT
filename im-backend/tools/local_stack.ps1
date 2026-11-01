@@ -5,7 +5,18 @@ param(
     [switch]$Build,
     [switch]$StopInfrastructure,
     [ValidateRange(1024, 65535)]
-    [int]$WebPort = 5173
+    [int]$WebPort = 5173,
+    # Backend ports move with these switches so the stack can run on a machine
+    # that already serves other applications on 8080-8083. The values are stored
+    # in state.json and reused by status, smoke and resume-chat-b.
+    [ValidateRange(1024, 65535)]
+    [int]$UserPort = 8081,
+    [ValidateRange(1024, 65535)]
+    [int]$ChatAPort = 8082,
+    [ValidateRange(1024, 65535)]
+    [int]$ChatBPort = 8083,
+    [ValidateRange(1024, 65535)]
+    [int]$GatewayPort = 8080
 )
 
 # Run on Windows PowerShell 5.1 or PowerShell 7 from any working directory.
@@ -26,6 +37,28 @@ function Read-State {
 function Save-State($state) {
     New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
     $state | ConvertTo-Json -Depth 5 | Set-Content -Path $stateFile -Encoding UTF8
+}
+
+# State files written before the port switches existed only carry WebPort, so
+# every reader falls back to the historical defaults.
+function Get-StackPorts($state) {
+    $ports = [ordered]@{ User = 8081; ChatA = 8082; ChatB = 8083; Gateway = 8080 }
+    if ($null -ne $state -and $null -ne $state.PSObject.Properties['Ports'] -and $null -ne $state.Ports) {
+        foreach ($name in @($ports.Keys)) {
+            $recorded = $state.Ports.PSObject.Properties[$name]
+            if ($null -ne $recorded -and $null -ne $recorded.Value) { $ports[$name] = [int]$recorded.Value }
+        }
+    }
+    return [pscustomobject]$ports
+}
+
+# Any local address counts as occupied: a wildcard listener (0.0.0.0 or ::)
+# still blocks a service that later binds 127.0.0.1 on the same port, and
+# filtering only 127.0.0.1/::1 let exactly that case fail after startup began.
+function Get-PortOwner([int]$port) {
+    $listeners = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+    if ($listeners.Count -eq 0) { return $null }
+    return $listeners[0].OwningProcess
 }
 
 function Owned-Process($entry) {
@@ -219,25 +252,25 @@ function Check-WebSocket([string]$url, [string]$label, [int]$retrySeconds = 0) {
     } while ($true)
 }
 
-function Smoke([int]$port) {
+function Smoke([int]$webPort, $ports) {
     Push-Location $backend
     try { Wait-Infrastructure 12 } finally { Pop-Location }
     Write-Host 'MySQL, Redis, pgvector and Kafka: ready'
     foreach ($item in @(
-        [pscustomobject]@{ Name = 'user'; Port = 8081 }
-        [pscustomobject]@{ Name = 'chat-a'; Port = 8082 }
-        [pscustomobject]@{ Name = 'chat-b'; Port = 8083 }
-        [pscustomobject]@{ Name = 'gateway'; Port = 8080 }
+        [pscustomobject]@{ Name = 'user'; Port = $ports.User }
+        [pscustomobject]@{ Name = 'chat-a'; Port = $ports.ChatA }
+        [pscustomobject]@{ Name = 'chat-b'; Port = $ports.ChatB }
+        [pscustomobject]@{ Name = 'gateway'; Port = $ports.Gateway }
     )) {
         if (-not (Check-Health "http://127.0.0.1:$($item.Port)/actuator/health")) {
             throw "$($item.Name) health is not UP on $($item.Port)"
         }
         Write-Host "$($item.Name) health: UP"
     }
-    $page = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/" -TimeoutSec 5
+    $page = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$webPort/" -TimeoutSec 5
     if ($page.StatusCode -ne 200 -or $page.Content -notlike '*id="app"*') { throw 'Web page did not load' }
     try {
-        $null = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/api/auth/me" -TimeoutSec 5
+        $null = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$webPort/api/auth/me" -TimeoutSec 5
         throw 'Unauthenticated /api/auth/me unexpectedly succeeded'
     } catch [System.Net.WebException] {
         $response = $_.Exception.Response
@@ -245,11 +278,11 @@ function Smoke([int]$port) {
             $response.ContentType -notlike 'application/json*') { throw 'Web to gateway to user proxy failed' }
         Write-Host 'Web to gateway to user route: HTTP 401 JSON (expected without token)'
     }
-    Check-WebSocket 'ws://127.0.0.1:8082/api/chats/ws' 'chat-a direct'
+    Check-WebSocket "ws://127.0.0.1:$($ports.ChatA)/api/chats/ws" 'chat-a direct'
     # Gateway health can turn UP before the cluster load balancer has made its
     # first healthy-instance selection. Retry only these routing handshakes.
-    Check-WebSocket 'ws://127.0.0.1:8080/api/chats/ws' 'gateway' 30
-    Check-WebSocket "ws://127.0.0.1:$port/api/chats/ws" 'web proxy' 30
+    Check-WebSocket "ws://127.0.0.1:$($ports.Gateway)/api/chats/ws" 'gateway' 30
+    Check-WebSocket "ws://127.0.0.1:$webPort/api/chats/ws" 'web proxy' 30
     Write-Host 'PASS: local HTTP and WebSocket routing; login and messaging require browser verification'
 }
 
@@ -259,16 +292,38 @@ switch ($Action) {
         if ($null -ne $old -and @($old.Processes | Where-Object { Owned-Process $_ }).Count -gt 0) {
             throw 'A recorded local stack is still running; use status or stop first'
         }
-        foreach ($port in @(8080, 8081, 8082, 8083)) {
-            $inUse = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
-                Where-Object { $_.LocalAddress -eq '127.0.0.1' -or $_.LocalAddress -eq '::1' }
-            if ($inUse) { throw "Port $port is already in use on loopback by PID $($inUse[0].OwningProcess); close that process first" }
+        $stackPorts = [pscustomobject]@{
+            User = $UserPort; ChatA = $ChatAPort; ChatB = $ChatBPort; Gateway = $GatewayPort
+        }
+        $distinct = @($stackPorts.User, $stackPorts.ChatA, $stackPorts.ChatB, $stackPorts.Gateway) |
+            Select-Object -Unique
+        if ($distinct.Count -ne 4) {
+            throw 'UserPort, ChatAPort, ChatBPort and GatewayPort must be four different ports'
+        }
+        if ($distinct -contains $WebPort) {
+            throw "WebPort $WebPort collides with a backend port; choose another -WebPort"
+        }
+        foreach ($item in @(
+            [pscustomobject]@{ Name = 'user'; Port = $stackPorts.User; Switch = '-UserPort' }
+            [pscustomobject]@{ Name = 'chat-a'; Port = $stackPorts.ChatA; Switch = '-ChatAPort' }
+            [pscustomobject]@{ Name = 'chat-b'; Port = $stackPorts.ChatB; Switch = '-ChatBPort' }
+            [pscustomobject]@{ Name = 'gateway'; Port = $stackPorts.Gateway; Switch = '-GatewayPort' }
+        )) {
+            $owner = Get-PortOwner $item.Port
+            if ($null -ne $owner) {
+                throw "Port $($item.Port) for $($item.Name) is already in use by PID $owner; stop that process or pass $($item.Switch) <free port>"
+            }
         }
         $env:IM_MYSQL_PASSWORD = Read-StackPassword 'IM_MYSQL_PASSWORD'
         $env:IM_PGVECTOR_PASSWORD = Read-StackPassword 'IM_PGVECTOR_PASSWORD'
         $env:IM_KAFKA_ENABLED = 'true'
         $env:IM_KAFKA_BOOTSTRAP = '127.0.0.1:19092'
-        $env:VITE_IM_GATEWAY_URL = 'http://127.0.0.1:8080'
+        # Both the chat service and the gateway read these, so a non-default set
+        # of backend ports has to reach them before the processes launch.
+        $env:IM_USER_SERVICE_URL = "http://127.0.0.1:$($stackPorts.User)"
+        $env:IM_CHAT_NODE_A_URL = "http://127.0.0.1:$($stackPorts.ChatA)"
+        $env:IM_CHAT_NODE_B_URL = "http://127.0.0.1:$($stackPorts.ChatB)"
+        $env:VITE_IM_GATEWAY_URL = "http://127.0.0.1:$($stackPorts.Gateway)"
         Remove-DuplicateEnvironmentVariables
         # Without an embedding model the Agent endpoint answers 503 before it
         # reaches Ollama. Default to the model the development stack installs so
@@ -314,27 +369,29 @@ switch ($Action) {
         } finally { Pop-Location }
         Warm-Models -chatModel $chatModel -embeddingModel $env:IM_AGENT_EMBED_MODEL -port $ollamaPort
         New-Item -ItemType Directory -Force -Path $stateDirectory | Out-Null
-        $state = [pscustomobject]@{ WebPort = $WebPort; Processes = @() }
+        $state = [pscustomobject]@{ WebPort = $WebPort; Ports = $stackPorts; Processes = @() }
         Save-State $state
         try {
             $jar = $jars.user
             # Command-line ports beat environment variables: a host that exports
             # SERVER__PORT would otherwise move the service off the port that
             # Wait-Health checks.
-            $entry = Launch 'user' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8081') $backend $jar $state
-            Wait-Health 'user' 8081 $entry
+            $entry = Launch 'user' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', "--server.port=$($stackPorts.User)") $backend $jar $state
+            Wait-Health 'user' $stackPorts.User $entry
             $jar = $jars['chat-a']
-            $entry = Launch 'chat-a' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8082') $backend $jar $state
-            Wait-Health 'chat-a' 8082 $entry
-            $entry = Launch 'chat-b' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8083') $backend $jar $state
-            Wait-Health 'chat-b' 8083 $entry
+            $entry = Launch 'chat-a' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', "--server.port=$($stackPorts.ChatA)") $backend $jar $state
+            Wait-Health 'chat-a' $stackPorts.ChatA $entry
+            $entry = Launch 'chat-b' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', "--server.port=$($stackPorts.ChatB)") $backend $jar $state
+            Wait-Health 'chat-b' $stackPorts.ChatB $entry
             $jar = $jars.gateway
-            $entry = Launch 'gateway' $java @('-jar', "`"$jar`"", '--spring.profiles.active=cluster', '--server.port=8080') $backend $jar $state
-            Wait-Health 'gateway' 8080 $entry
+            $entry = Launch 'gateway' $java @('-jar', "`"$jar`"", '--spring.profiles.active=cluster', "--server.port=$($stackPorts.Gateway)") $backend $jar $state
+            Wait-Health 'gateway' $stackPorts.Gateway $entry
             # Docker Desktop or another application can acquire the web port
             # while infrastructure and Java services are starting. Choose it
             # immediately before launching Vite, including wildcard listeners.
-            $candidates = if ($PSBoundParameters.ContainsKey('WebPort')) { @($WebPort) } else { @(5173..5182) }
+            $candidates = if ($PSBoundParameters.ContainsKey('WebPort')) { @($WebPort) } else {
+                @(5173..5182) | Where-Object { $distinct -notcontains $_ }
+            }
             $selectedPort = $null
             foreach ($candidate in $candidates) {
                 $occupied = @(Get-NetTCPConnection -LocalPort $candidate -State Listen -ErrorAction SilentlyContinue |
@@ -360,23 +417,30 @@ switch ($Action) {
             try { [System.IO.File]::Delete($stateFile) } catch { }
             throw
         }
-        try { Smoke $WebPort } catch {
+        try { Smoke $WebPort $stackPorts } catch {
             Write-Host 'The stack is still running for diagnosis; use status, smoke and stop when ready'
             throw
         }
+        Write-Host "Web URL: http://127.0.0.1:$WebPort/"
+        Write-Host "Backend ports: user=$($stackPorts.User) chat-a=$($stackPorts.ChatA) chat-b=$($stackPorts.ChatB) gateway=$($stackPorts.Gateway)"
     }
     'status' {
         $state = Read-State
         if ($null -eq $state) { Write-Host 'No local stack recorded'; break }
+        $stackPorts = Get-StackPorts $state
         foreach ($entry in $state.Processes) {
             $process = Owned-Process $entry
             $health = if ($null -eq $process) { 'not owned/running' } elseif ($entry.Service -eq 'web') { 'check with smoke' } else {
-                $port = switch ($entry.Service) { user { 8081 } 'chat-a' { 8082 } 'chat-b' { 8083 } gateway { 8080 } }
+                $port = switch ($entry.Service) {
+                    'user' { $stackPorts.User } 'chat-a' { $stackPorts.ChatA }
+                    'chat-b' { $stackPorts.ChatB } 'gateway' { $stackPorts.Gateway }
+                }
                 if (Check-Health "http://127.0.0.1:$port/actuator/health") { 'UP' } else { 'DOWN' }
             }
             Write-Host "$($entry.Service): PID $($entry.Id), owned=$($null -ne $process), health=$health"
         }
         Write-Host "Web URL: http://127.0.0.1:$($state.WebPort)/"
+        Write-Host "Backend ports: user=$($stackPorts.User) chat-a=$($stackPorts.ChatA) chat-b=$($stackPorts.ChatB) gateway=$($stackPorts.Gateway)"
     }
     'pause-chat-b' {
         $state = Read-State
@@ -399,27 +463,30 @@ switch ($Action) {
     'resume-chat-b' {
         $state = Read-State
         if ($null -eq $state) { throw 'No recorded local stack; use start first' }
+        $stackPorts = Get-StackPorts $state
         $old = @($state.Processes | Where-Object { $_.Service -eq 'chat-b' }) | Select-Object -Last 1
         if ($null -eq $old) { throw 'No recorded chat-b; use start first' }
         if ($null -ne (Owned-Process $old)) { throw 'Recorded chat-b is still running' }
-        $occupied = @(Get-NetTCPConnection -LocalPort 8083 -State Listen -ErrorAction SilentlyContinue)
-        if ($occupied.Count -gt 0) { throw "Port 8083 is occupied by PID $($occupied[0].OwningProcess); refusing to replace it" }
+        $owner = Get-PortOwner $stackPorts.ChatB
+        if ($null -ne $owner) { throw "Port $($stackPorts.ChatB) is occupied by PID $owner; refusing to replace it" }
         $jar = Join-Path $backend 'im-chat-service\target\im-chat-service-0.0.1-SNAPSHOT.jar'
         if (-not (Test-Path $jar)) { throw "Missing $jar; rebuild the chat service" }
         $env:IM_MYSQL_PASSWORD = Read-StackPassword 'IM_MYSQL_PASSWORD'
         $env:IM_PGVECTOR_PASSWORD = Read-StackPassword 'IM_PGVECTOR_PASSWORD'
         $env:IM_KAFKA_ENABLED = 'true'
         $env:IM_KAFKA_BOOTSTRAP = '127.0.0.1:19092'
+        $env:IM_USER_SERVICE_URL = "http://127.0.0.1:$($stackPorts.User)"
         $java = (Get-Command java.exe -ErrorAction Stop).Source
         $state.Processes = @($state.Processes | Where-Object { $_.Service -ne 'chat-b' })
         Save-State $state
-        $entry = Launch 'chat-b' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', '--server.port=8083') $backend $jar $state
-        Wait-Health 'chat-b' 8083 $entry
+        $entry = Launch 'chat-b' $java @('-jar', "`"$jar`"", '--spring.profiles.active=dev', "--server.port=$($stackPorts.ChatB)") $backend $jar $state
+        Wait-Health 'chat-b' $stackPorts.ChatB $entry
     }
     'smoke' {
         $state = Read-State
+        $stackPorts = Get-StackPorts $state
         $port = if ($null -ne $state) { [int]$state.WebPort } else { $WebPort }
-        Smoke $port
+        Smoke $port $stackPorts
     }
     'stop' {
         $state = Read-State

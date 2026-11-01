@@ -267,7 +267,9 @@ def seed(user_url, chat_url, path, progress=print):
     check(len(set(sent)) == len(messages), "duplicate message IDs in the fixture")
     for person in people[:4]:
         history = all_history(chat_url, group_id, person["token"])
-        check(len(history) == len(messages) and {row["id"] for row in history} == set(sent),
+        # Pagination must return every fixture message. A message someone typed
+        # into the same room by hand is allowed and must not fail the fixture.
+        check({row["id"] for row in history} >= set(sent),
               person["nickname"] + " cannot see all 136 messages across pages")
         check(all(row["senderId"] in ids for row in history), "unexpected group sender")
     status, _ = call(chat_url, f"/api/chats/groups/{group_id}/messages/{sent[0]}",

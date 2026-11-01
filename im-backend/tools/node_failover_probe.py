@@ -7,6 +7,7 @@ creates two disposable accounts and three real direct messages in dev MySQL.
 """
 
 import argparse
+import json
 import subprocess
 import sys
 import time
@@ -20,10 +21,30 @@ from message_recall_probe import new_account
 
 BACKEND = Path(__file__).resolve().parent.parent
 STACK = BACKEND / "tools" / "local_stack.ps1"
-USER = "http://127.0.0.1:8081"
-NODE_A = "http://127.0.0.1:8082"
-NODE_B = "http://127.0.0.1:8083"
-GATEWAY = "http://127.0.0.1:8080"
+DEFAULT_PORTS = {"User": 8081, "ChatA": 8082, "ChatB": 8083, "Gateway": 8080}
+
+
+def recorded_ports():
+    """Ports recorded by local_stack.ps1; state files without Ports keep the defaults.
+
+    The launcher writes state.json with Windows PowerShell 5.1, whose UTF8
+    encoding starts with a BOM, so decode with utf-8-sig or the parse fails and
+    every custom port silently falls back to the default.
+    """
+    try:
+        state = json.loads(
+            (BACKEND / ".local-stack" / "state.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return dict(DEFAULT_PORTS)
+    recorded = state.get("Ports") or {}
+    return {name: int(recorded.get(name, port)) for name, port in DEFAULT_PORTS.items()}
+
+
+PORTS = recorded_ports()
+USER = f"http://127.0.0.1:{PORTS['User']}"
+NODE_A = f"http://127.0.0.1:{PORTS['ChatA']}"
+NODE_B = f"http://127.0.0.1:{PORTS['ChatB']}"
+GATEWAY = f"http://127.0.0.1:{PORTS['Gateway']}"
 
 
 def stack(action):
@@ -118,7 +139,7 @@ def main():
             stack("resume-chat-b")
             status, health = call(NODE_B, "/actuator/health")
             check(status == 200 and health.get("status") == "UP", "chat-b did not recover")
-            print("PASS: recorded chat-b process restored on port 8083")
+            print(f"PASS: recorded chat-b process restored on port {PORTS['ChatB']}")
     print("PASS: gateway switched to chat-a; reconnect sync recovered the missed message; live push resumed")
     print("Two disposable accounts and three direct messages remain in local dev MySQL.")
 
