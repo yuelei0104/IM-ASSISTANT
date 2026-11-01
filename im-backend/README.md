@@ -44,7 +44,12 @@ have not changed. Open `http://127.0.0.1:5173/` and register using the
 development code shown in the UI. The launcher starts MySQL, Redis, pgvector and Kafka
 with Compose, checks their readiness, creates the notification topic if needed,
 then starts 8081, 8082, 8083, 8080 and Vite in that order. It refuses a backend
-port already owned on loopback. After Docker and Java are ready it picks the
+port already owned by any listener on that port, including a wildcard one, and
+names the process and the switch that moves it. Pass `-UserPort`, `-ChatAPort`,
+`-ChatBPort` and `-GatewayPort` when 8080-8083 are used by other applications;
+the values are written to `.local-stack/state.json`, so `status`, `smoke`,
+`pause-chat-b` and `resume-chat-b` keep using them and `node_failover_probe.py`
+reads the same ports. After Docker and Java are ready it picks the
 first free web port from 5173 through 5182 (including Docker Desktop port
 forwarding); `-WebPort 5174` requests exactly that port. Use the URL printed by
 `start` or `status`. It never kills a process merely because it uses one of these
